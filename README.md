@@ -31,7 +31,9 @@ Android 10 or newer.
 - Export as video, **video without sound**, **sound only** (M4A), or a
   looping **GIF** (320–640p, 10–25 fps, with every edit in it) — plus a
   one-tap *Extract audio* in the library.
-- Music tracks, titles, aspect ratio, crop, rotate, flip, filters, brightness,
+- **Crop by touch**: drag the corners, edges or the whole box on the picture,
+  any size and shape, or held to 1:1, 4:5, 9:16, 16:9, 4:3 or 3:4.
+- Music tracks, titles, aspect ratio, rotate, flip, filters, brightness,
   contrast, saturation, fades. Undo/redo; drafts save themselves.
 - The preview plays exactly what the export will render.
 

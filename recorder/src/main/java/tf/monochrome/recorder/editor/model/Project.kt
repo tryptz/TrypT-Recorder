@@ -133,8 +133,8 @@ data class CropInsets(
     val isNone: Boolean get() = left == 0f && top == 0f && right == 0f && bottom == 0f
 
     companion object {
-        /** Each edge at most this much, so at least 10% of either axis survives. */
-        const val MAX = 0.45f
+        /** At least this much of either side survives a crop; any size and shape above it. */
+        const val MIN_KEEP = 0.05f
     }
 }
 

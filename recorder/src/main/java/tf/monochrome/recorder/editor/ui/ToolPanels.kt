@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import tf.monochrome.recorder.R
 import tf.monochrome.recorder.capture.formatDuration
 import tf.monochrome.recorder.editor.export.ExportMode
+import tf.monochrome.recorder.editor.export.ExportPlanner
 import tf.monochrome.recorder.editor.export.ExportQuality
 import tf.monochrome.recorder.editor.export.ExportResolution
 import tf.monochrome.recorder.editor.export.ExportSettings
@@ -41,6 +42,7 @@ import tf.monochrome.recorder.editor.export.GifFrameRate
 import tf.monochrome.recorder.editor.export.GifSize
 import tf.monochrome.recorder.editor.model.AspectPreset
 import tf.monochrome.recorder.editor.model.AudioClip
+import tf.monochrome.recorder.editor.model.CropBox
 import tf.monochrome.recorder.editor.model.CropInsets
 import tf.monochrome.recorder.editor.model.Filter
 import tf.monochrome.recorder.editor.model.MAX_VOLUME
@@ -61,10 +63,11 @@ import tf.monochrome.recorder.editor.model.trimClip
 import tf.monochrome.recorder.editor.model.trimEndToPlayhead
 import tf.monochrome.recorder.editor.model.trimStartToPlayhead
 import tf.monochrome.recorder.editor.model.updateText
+import kotlin.math.roundToInt
 
 /** The panel a tool opens below the timeline. */
 enum class Tool {
-    NONE, TRIM, SPEED, VOLUME, AUDIO_FADES, AUDIO_POSITION, TEXT, CANVAS, FILTERS, ADJUST, VIDEO_FADES, EXPORT;
+    NONE, TRIM, SPEED, VOLUME, AUDIO_FADES, AUDIO_POSITION, TEXT, CROP, CANVAS, FILTERS, ADJUST, VIDEO_FADES, EXPORT;
 
     /** Whether this tool still makes sense for [selection]. */
     fun fits(selection: Selection): Boolean = when (this) {
@@ -293,21 +296,92 @@ fun CanvasPanel(vm: EditorViewModel, project: Project) {
         FilterChip(selected = c.flipHorizontal, onClick = { vm.edit { it.copy(canvas = it.canvas.copy(flipHorizontal = !c.flipHorizontal)) } }, label = { Text(stringResource(R.string.flip_horizontal)) })
         FilterChip(selected = c.flipVertical, onClick = { vm.edit { it.copy(canvas = it.canvas.copy(flipVertical = !c.flipVertical)) } }, label = { Text(stringResource(R.string.flip_vertical)) })
     }
-    Text(stringResource(R.string.crop), style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 4.dp))
-    CropSlider(stringResource(R.string.crop_left), c.crop.left, vm::commit) { v -> vm.preview { it.copy(canvas = it.canvas.copy(crop = it.canvas.crop.copy(left = v))) } }
-    CropSlider(stringResource(R.string.crop_right), c.crop.right, vm::commit) { v -> vm.preview { it.copy(canvas = it.canvas.copy(crop = it.canvas.crop.copy(right = v))) } }
-    CropSlider(stringResource(R.string.crop_top), c.crop.top, vm::commit) { v -> vm.preview { it.copy(canvas = it.canvas.copy(crop = it.canvas.crop.copy(top = v))) } }
-    CropSlider(stringResource(R.string.crop_bottom), c.crop.bottom, vm::commit) { v -> vm.preview { it.copy(canvas = it.canvas.copy(crop = it.canvas.crop.copy(bottom = v))) } }
+}
+
+/** Shapes the crop box can be held to while dragging. */
+enum class CropRatio(private val pixels: Float?) {
+    FREE(null),
+    ORIGINAL(null),
+    SQUARE(1f),
+    PORTRAIT(4f / 5f),
+    TALL(9f / 16f),
+    WIDE(16f / 9f),
+    CLASSIC(4f / 3f),
+    CLASSIC_TALL(3f / 4f),
+    ;
+
+    /** The lock as a ratio of fractions of a picture [frameAspect] wide per unit high; null if free. */
+    fun normalized(frameAspect: Float): Float? = when (this) {
+        FREE -> null
+        ORIGINAL -> 1f
+        else -> CropBox.normalizedRatio(pixels!!, frameAspect)
+    }
+}
+
+/** Width and height of the whole first clip as shown — turned, uncropped. Null with no clips. */
+fun shownFrame(project: Project): Pair<Int, Int>? = project.clips.firstOrNull()?.source?.let { s ->
+    ExportPlanner.canvasSize(
+        s.width,
+        s.height,
+        project.canvas.copy(crop = CropInsets(), aspect = AspectPreset.ORIGINAL),
+        ExportResolution.ORIGINAL,
+    )
+}
+
+/**
+ * The crop tool's panel; the box itself is dragged on the picture
+ * ([CropOverlay]). Picking a shape fits the largest box of it.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun CropPanel(vm: EditorViewModel, project: Project, ratio: CropRatio, onRatio: (CropRatio) -> Unit) {
+    val c = project.canvas
+    val (frameW, frameH) = shownFrame(project) ?: return
+    val rect = CropBox.shown(c)
+    Text(stringResource(R.string.crop_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        CropRatio.entries.forEach { r ->
+            FilterChip(
+                selected = ratio == r,
+                onClick = {
+                    onRatio(r)
+                    r.normalized(frameW.toFloat() / frameH)?.let { k ->
+                        vm.edit { p -> p.copy(canvas = p.canvas.copy(crop = CropBox.insets(CropBox.fitRatio(CropBox.shown(p.canvas), k), p.canvas))) }
+                    }
+                },
+                label = { Text(cropRatioLabel(r)) },
+            )
+        }
+    }
+    Text(
+        stringResource(R.string.crop_size, (rect.width * frameW).roundToInt(), (rect.height * frameH).roundToInt()),
+        style = MaterialTheme.typography.bodyMedium,
+    )
+    if (c.aspect != AspectPreset.ORIGINAL) {
+        Text(
+            stringResource(R.string.crop_canvas_shape_hint, aspectLabel(c.aspect)),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        TextButton(onClick = { vm.edit { it.copy(canvas = it.canvas.copy(aspect = AspectPreset.ORIGINAL)) } }) {
+            Text(stringResource(R.string.crop_use_its_shape))
+        }
+    }
     if (!c.crop.isNone) {
         TextButton(onClick = { vm.edit { it.copy(canvas = it.canvas.copy(crop = CropInsets())) } }) { Text(stringResource(R.string.reset_crop)) }
     }
 }
 
 @Composable
-private fun CropSlider(label: String, value: Float, onDone: () -> Unit, onChange: (Float) -> Unit) {
-    Labeled(label, "${(value * 100).toInt()}%") {
-        Slider(value = value, onValueChange = onChange, onValueChangeFinished = onDone, valueRange = 0f..CropInsets.MAX)
-    }
+private fun cropRatioLabel(r: CropRatio) = when (r) {
+    CropRatio.FREE -> stringResource(R.string.crop_free)
+    CropRatio.ORIGINAL -> stringResource(R.string.aspect_original)
+    CropRatio.SQUARE -> "1:1"
+    CropRatio.PORTRAIT -> "4:5"
+    CropRatio.TALL -> "9:16"
+    CropRatio.WIDE -> "16:9"
+    CropRatio.CLASSIC -> "4:3"
+    CropRatio.CLASSIC_TALL -> "3:4"
 }
 
 @Composable

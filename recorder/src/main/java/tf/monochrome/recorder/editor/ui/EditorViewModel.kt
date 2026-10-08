@@ -34,6 +34,8 @@ import tf.monochrome.recorder.editor.export.ExportPlanner
 import tf.monochrome.recorder.editor.export.ExportResolution
 import tf.monochrome.recorder.editor.export.ExportSettings
 import tf.monochrome.recorder.editor.export.PlanResult
+import tf.monochrome.recorder.editor.model.AspectPreset
+import tf.monochrome.recorder.editor.model.CropInsets
 import tf.monochrome.recorder.editor.model.History
 import tf.monochrome.recorder.editor.model.MediaRef
 import tf.monochrome.recorder.editor.model.Project
@@ -83,6 +85,9 @@ class EditorViewModel(app: Application, private val projectId: String) : Android
 
     /** Shown once, e.g. "that file could not be read". */
     val message = MutableStateFlow<String?>(null)
+
+    /** While the crop tool is open the preview shows the whole picture, for the crop box to sit over. */
+    private var cropEditing = false
 
     // No reference to the SurfaceView is kept: a view model outlives its views.
     private var player: CompositionPlayer? = null
@@ -253,8 +258,21 @@ class EditorViewModel(app: Application, private val projectId: String) : Android
         }
     }
 
+    /**
+     * Shows the picture uncropped, in its own shape, while the crop tool is
+     * open. The plan then ignores the crop, so dragging the box does not
+     * rebuild the player; leaving the tool does, once.
+     */
+    fun setCropEditing(on: Boolean) {
+        if (cropEditing == on) return
+        cropEditing = on
+        schedulePreview(immediate = true)
+    }
+
     private fun rebuildPreview() {
-        val p = project ?: return
+        val p = project?.let {
+            if (cropEditing) it.copy(canvas = it.canvas.copy(crop = CropInsets(), aspect = AspectPreset.ORIGINAL, fill = false)) else it
+        } ?: return
         val result = ExportPlanner.plan(p, PREVIEW_SETTINGS)
         val plan = (result as? PlanResult.Ok)?.plan
         plan?.visuals?.let { _aspect.value = it.width.toFloat() / it.height }

@@ -59,9 +59,10 @@ simplified and cannot.
 
 All four are the gate for any change. Decisions live in pure Kotlin
 (`CapturePlanner`, `PauseClock`, `Pcm`, `AacPicker`, `FrameTiming`,
-`MediaDetails`, `Timeline`, `History`, `ExportPlanner`, `FrameSampler`,
-`YuvFrame`, `GifPalette`, `GifEncoder`) precisely so the tests can hold them; when you change one of
-those rules, change its test, and never loosen a test to make it pass.
+`MediaDetails`, `Timeline`, `History`, `ExportPlanner`, `CropBox`,
+`FrameSampler`, `YuvFrame`, `GifPalette`, `GifEncoder`) precisely so the tests
+can hold them; when you change one of those rules, change its test, and never
+loosen a test to make it pass.
 
 Nothing here has an automated device test. Say plainly what was and was not
 run on a phone; `docs/recorder.md` has the device checklist.

@@ -9,7 +9,7 @@ repository; this repository is its standalone home.
 ## Build and test
 
 ```
-./gradlew :recorder:testDebugUnitTest    # 115 JVM tests, no device
+./gradlew :recorder:testDebugUnitTest    # 128 JVM tests, no device
 ./gradlew :recorder:lintDebug            # clean: 0 errors, 0 warnings
 ./gradlew :recorder:assembleDebug        # signed with the committed recorder/debug.keystore
 ./gradlew :recorder:assembleRelease      # R8-minified, ~4 MB
@@ -96,8 +96,13 @@ the rate while moving (`FrameTiming`) beside the file's average.
 - Music and other audio files on lanes; overlapping pieces mix.
 - Titles: text, position, size, colour, background box, start/end on the
   timeline.
-- Canvas: aspect (original, 16:9, 9:16, 1:1, 4:5, 4:3), fit or fill, rotate,
-  flip, crop.
+- **Crop by touch**: while the Crop tool is open the preview shows the whole
+  picture with a box over it — drag a corner or edge to resize, the inside to
+  move. Any size down to 5 % of either side and any shape, or held to
+  original, 1:1, 4:5, 9:16, 16:9, 4:3 or 3:4. With the canvas shape on
+  *Original* the export takes the crop's own shape.
+- Canvas: shape (original, 16:9, 9:16, 1:1, 4:5, 4:3), fit or fill, rotate,
+  flip.
 - Look: filters (mono, sepia, vivid, cool, warm, invert), brightness, contrast,
   saturation, fade in from / out to black.
 - Undo/redo (a slider drag is one step), drafts autosaved as JSON.
@@ -125,8 +130,8 @@ recorder/src/main/java/tf/monochrome/recorder/
 
 The rule that keeps it testable without a phone: decisions live in pure Kotlin
 (`CapturePlanner`, `PauseClock`, `Pcm`, `Timeline`, `History`,
-`ExportPlanner`, and for GIFs `FrameSampler`, `YuvFrame`, `GifPalette`,
-`GifEncoder`), and the Android/Media3 layers only carry them out.
+`ExportPlanner`, `CropBox`, and for GIFs `FrameSampler`, `YuvFrame`,
+`GifPalette`, `GifEncoder`), and the Android/Media3 layers only carry them out.
 
 ### Why things are the way they are
 
@@ -175,6 +180,16 @@ The rule that keeps it testable without a phone: decisions live in pure Kotlin
   the oldest samples on overrun, so latency cannot creep.
 - **Volume above 100 %** uses `VolumeEnvelope`, not Media3's `GainProcessor`,
   which is specified for [0, 1] and wraps 16-bit samples above that.
+- **The crop is stored in the source's orientation, dragged in the
+  picture's.** `CropInsets` are cut from the source before it is turned or
+  mirrored, because that is where Media3's Crop runs. The box the user drags
+  is over the picture as it comes out, so `CropBox` maps between the two:
+  mirror first, then turn — the order Media3's ScaleAndRotateTransformation
+  uses (post-scale, then post-rotate). While the tool is open the preview is
+  planned without the crop and in the picture's own shape, so the box sits
+  exactly over the frame and dragging it never rebuilds the player. Drags are
+  measured from where they began, so a handle held at the picture's edge
+  stays under the finger when it comes back; each drag is one undo step.
 - **Time-based effects** (fades, titles) use composition time. Both
   `CompositionPlayer` and `Transformer` hand per-item effects composition-time
   timestamps (checked in the 1.10.1 sources: `VideoEncoderGraphInput` adds each
@@ -241,6 +256,9 @@ emulator, so none of it has run on a phone. Before a release, check at least:
 - [ ] Editor preview plays, seeks and updates for every tool; export in all
       three modes; detached audio lines up after export.
 - [ ] Titles and fades appear at the same times in preview and export.
+- [ ] Crop tool: the box sits exactly over the picture; corners, edges and
+      the inside each grab and follow the finger; a held shape stays held;
+      the export matches the box — also after Rotate and Flip.
 - [ ] GIF export of a portrait recording comes out upright, in
       `Pictures/TryptifyRecorder`, loops, and plays at the chosen rate in a
       browser and a chat app; cancel mid-way leaves no file; a still stretch

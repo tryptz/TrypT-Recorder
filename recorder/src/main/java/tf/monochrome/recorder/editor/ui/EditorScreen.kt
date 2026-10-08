@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentCut
+import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Gradient
@@ -96,6 +97,7 @@ import tf.monochrome.recorder.editor.export.ExportSettings
 import tf.monochrome.recorder.editor.export.ExportState
 import tf.monochrome.recorder.editor.export.PlanResult
 import tf.monochrome.recorder.editor.model.AudioKind
+import tf.monochrome.recorder.editor.model.CropBox
 import tf.monochrome.recorder.editor.model.MediaRef
 import tf.monochrome.recorder.editor.model.Project
 import tf.monochrome.recorder.editor.model.assignLanes
@@ -133,6 +135,7 @@ fun EditorScreen(projectId: String, onClose: () -> Unit) {
     var tool by rememberSaveable { mutableStateOf(Tool.NONE) }
     var zoom by rememberSaveable { mutableFloatStateOf(48f) }
     var exportSettings by remember { mutableStateOf(ExportSettings()) }
+    var cropRatio by rememberSaveable { mutableStateOf(CropRatio.FREE) }
     var renaming by remember { mutableStateOf(false) }
     var detailsOf by remember { mutableStateOf<MediaRef?>(null) }
 
@@ -144,6 +147,7 @@ fun EditorScreen(projectId: String, onClose: () -> Unit) {
     }
 
     LaunchedEffect(selection) { if (!tool.fits(selection)) tool = Tool.NONE }
+    LaunchedEffect(tool) { vm.setCropEditing(tool == Tool.CROP) }
     LaunchedEffect(message) {
         message?.let {
             snackbar.showSnackbar(it)
@@ -214,11 +218,23 @@ fun EditorScreen(projectId: String, onClose: () -> Unit) {
                         Button(onClick = { clipPicker.launch(arrayOf("video/*")) }) { Text(stringResource(R.string.action_add_clip)) }
                     }
                 } else {
-                    AndroidView(
-                        factory = { ctx -> SurfaceView(ctx).also(vm::attachSurface) },
-                        onRelease = vm::detachSurface,
-                        modifier = Modifier.aspectRatio(aspect.coerceIn(0.2f, 5f)),
-                    )
+                    Box(Modifier.aspectRatio(aspect.coerceIn(0.2f, 5f))) {
+                        AndroidView(
+                            factory = { ctx -> SurfaceView(ctx).also(vm::attachSurface) },
+                            onRelease = vm::detachSurface,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                        if (tool == Tool.CROP) {
+                            val frame = shownFrame(project)
+                            CropOverlay(
+                                rect = CropBox.shown(project.canvas),
+                                ratio = frame?.let { (w, h) -> cropRatio.normalized(w.toFloat() / h) },
+                                onChange = { r -> vm.preview { it.copy(canvas = it.canvas.copy(crop = CropBox.insets(r, it.canvas))) } },
+                                onDragEnd = vm::commit,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+                    }
                     previewError?.let {
                         Text(
                             stringResource(R.string.editor_preview_error, it),
@@ -297,6 +313,8 @@ fun EditorScreen(projectId: String, onClose: () -> Unit) {
                         playheadUs = playhead,
                         exportSettings = exportSettings,
                         onExportSettings = { exportSettings = it },
+                        cropRatio = cropRatio,
+                        onCropRatio = { cropRatio = it },
                         onExport = {
                             when (vm.export(exportSettings)) {
                                 null -> tool = Tool.NONE
@@ -360,6 +378,7 @@ private fun actionsFor(
         EditorAction(Icons.Filled.LibraryMusic, stringResource(R.string.action_add_audio), project.clips.isNotEmpty(), addAudio),
         EditorAction(Icons.Filled.Title, stringResource(R.string.action_add_text), project.clips.isNotEmpty()) { vm.addText(addTextLabel); openTool(Tool.TEXT) },
         EditorAction(Icons.Filled.ContentCut, stringResource(R.string.action_split), project.clips.isNotEmpty()) { vm.edit { it.splitAt(playheadUs) } },
+        EditorAction(Icons.Filled.Crop, stringResource(R.string.crop), project.clips.isNotEmpty()) { openTool(Tool.CROP) },
         EditorAction(Icons.Filled.AspectRatio, stringResource(R.string.tool_canvas)) { openTool(Tool.CANVAS) },
         EditorAction(Icons.Filled.AutoFixHigh, stringResource(R.string.tool_filters)) { openTool(Tool.FILTERS) },
         EditorAction(Icons.Filled.Tune, stringResource(R.string.tool_adjust)) { openTool(Tool.ADJUST) },
@@ -468,6 +487,8 @@ private fun ToolContent(
     playheadUs: Long,
     exportSettings: ExportSettings,
     onExportSettings: (ExportSettings) -> Unit,
+    cropRatio: CropRatio,
+    onCropRatio: (CropRatio) -> Unit,
     onExport: () -> Unit,
 ) {
     val clip = (selection as? Selection.Clip)?.let { s -> project.clips.firstOrNull { it.id == s.id } }
@@ -487,6 +508,7 @@ private fun ToolContent(
         Tool.AUDIO_FADES -> audio?.let { AudioFadesPanel(vm, it) }
         Tool.AUDIO_POSITION -> audio?.let { AudioPositionPanel(vm, it, playheadUs) }
         Tool.TEXT -> text?.let { TextPanel(vm, it, playheadUs) }
+        Tool.CROP -> CropPanel(vm, project, cropRatio, onCropRatio)
         Tool.CANVAS -> CanvasPanel(vm, project)
         Tool.FILTERS -> FiltersPanel(vm, project)
         Tool.ADJUST -> AdjustPanel(vm, project)
@@ -503,6 +525,7 @@ private fun toolTitle(t: Tool) = when (t) {
     Tool.AUDIO_FADES -> R.string.tool_fades
     Tool.AUDIO_POSITION -> R.string.tool_position
     Tool.TEXT -> R.string.tool_text
+    Tool.CROP -> R.string.crop
     Tool.CANVAS -> R.string.tool_canvas
     Tool.FILTERS -> R.string.tool_filters
     Tool.ADJUST -> R.string.tool_adjust

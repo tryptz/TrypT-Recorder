@@ -174,10 +174,11 @@
     <string name="flip_horizontal">Flip ↔</string>
     <string name="flip_vertical">Flip ↕</string>
     <string name="crop">Crop</string>
-    <string name="crop_left">Left</string>
-    <string name="crop_right">Right</string>
-    <string name="crop_top">Top</string>
-    <string name="crop_bottom">Bottom</string>
+    <string name="crop_hint">Drag a corner or an edge to resize the box, the inside to move it.</string>
+    <string name="crop_free">Free</string>
+    <string name="crop_size">%1$d × %2$d px</string>
+    <string name="crop_canvas_shape_hint">The canvas shape is %1$s, so the crop is fitted into that.</string>
+    <string name="crop_use_its_shape">Use the crop’s own shape</string>
     <string name="reset_crop">Reset crop</string>
     <string name="filter_none">None</string>
     <string name="filter_mono">Mono</string>
