@@ -161,6 +161,17 @@ class ExportPlannerTest {
     }
 
     @Test
+    fun `grain reaches the picture, held to its range`() {
+        assertEquals(0f, plan(project(video("a", 10))).visuals!!.grain)
+        val p = project(video("a", 10)).copy(look = VideoLook(grain = 1.5f, grainSize = -0.2f))
+        val v = plan(p).visuals!!
+        assertEquals(1f, v.grain)
+        assertEquals(0f, v.grainSize)
+        // Silent video and GIF carry it too.
+        assertEquals(1f, plan(p, ExportMode.GIF).visuals!!.grain)
+    }
+
+    @Test
     fun `whole-video fades are held to half the length`() {
         val p = project(video("a", 10)).copy(look = VideoLook(fadeInUs = 9 * SEC, fadeOutUs = 1 * SEC))
         val v = plan(p).visuals!!

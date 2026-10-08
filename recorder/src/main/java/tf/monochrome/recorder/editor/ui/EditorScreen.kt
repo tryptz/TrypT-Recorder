@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Gradient
+import androidx.compose.material.icons.filled.Grain
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Pause
@@ -382,6 +383,7 @@ private fun actionsFor(
         EditorAction(Icons.Filled.AspectRatio, stringResource(R.string.tool_canvas)) { openTool(Tool.CANVAS) },
         EditorAction(Icons.Filled.AutoFixHigh, stringResource(R.string.tool_filters)) { openTool(Tool.FILTERS) },
         EditorAction(Icons.Filled.Tune, stringResource(R.string.tool_adjust)) { openTool(Tool.ADJUST) },
+        EditorAction(Icons.Filled.Grain, stringResource(R.string.tool_grain)) { openTool(Tool.GRAIN) },
         EditorAction(Icons.Filled.Gradient, stringResource(R.string.tool_fades)) { openTool(Tool.VIDEO_FADES) },
     )
     is Selection.Clip -> {
@@ -512,6 +514,7 @@ private fun ToolContent(
         Tool.CANVAS -> CanvasPanel(vm, project)
         Tool.FILTERS -> FiltersPanel(vm, project)
         Tool.ADJUST -> AdjustPanel(vm, project)
+        Tool.GRAIN -> GrainPanel(vm, project)
         Tool.VIDEO_FADES -> VideoFadesPanel(vm, project)
         Tool.EXPORT -> ExportPanel(exportSettings, onExportSettings, onExport)
     }
@@ -529,6 +532,7 @@ private fun toolTitle(t: Tool) = when (t) {
     Tool.CANVAS -> R.string.tool_canvas
     Tool.FILTERS -> R.string.tool_filters
     Tool.ADJUST -> R.string.tool_adjust
+    Tool.GRAIN -> R.string.tool_grain
     Tool.VIDEO_FADES -> R.string.tool_fades
     Tool.EXPORT -> R.string.action_export
 }

@@ -102,6 +102,9 @@ data class PlannedVisuals(
     val fadeOutUs: Long,
     val totalUs: Long,
     val texts: List<PlannedText>,
+    /** Film grain amount 0..1 (0 = none) and size 0..1 (fine to coarse); see [Grain]. */
+    val grain: Float = 0f,
+    val grainSize: Float = 0f,
 )
 
 data class ExportPlan(
@@ -231,6 +234,8 @@ object ExportPlanner {
             fadeInUs = project.look.fadeInUs.coerceIn(0, total / 2),
             fadeOutUs = project.look.fadeOutUs.coerceIn(0, total / 2),
             totalUs = total,
+            grain = project.look.grain.coerceIn(0f, 1f),
+            grainSize = project.look.grainSize.coerceIn(0f, 1f),
             texts = project.texts.mapNotNull { t ->
                 val s = t.startUs.coerceIn(0, total)
                 val e = t.endUs.coerceIn(0, total)

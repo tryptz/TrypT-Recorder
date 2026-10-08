@@ -52,6 +52,7 @@ import tf.monochrome.recorder.editor.model.TextItem
 import tf.monochrome.recorder.editor.model.TextPosition
 import tf.monochrome.recorder.editor.model.TextSize
 import tf.monochrome.recorder.editor.model.VideoClip
+import tf.monochrome.recorder.editor.model.VideoLook
 import tf.monochrome.recorder.editor.model.durationUs
 import tf.monochrome.recorder.editor.model.moveAudio
 import tf.monochrome.recorder.editor.model.setAudioFades
@@ -67,7 +68,7 @@ import kotlin.math.roundToInt
 
 /** The panel a tool opens below the timeline. */
 enum class Tool {
-    NONE, TRIM, SPEED, VOLUME, AUDIO_FADES, AUDIO_POSITION, TEXT, CROP, CANVAS, FILTERS, ADJUST, VIDEO_FADES, EXPORT;
+    NONE, TRIM, SPEED, VOLUME, AUDIO_FADES, AUDIO_POSITION, TEXT, CROP, CANVAS, FILTERS, ADJUST, GRAIN, VIDEO_FADES, EXPORT;
 
     /** Whether this tool still makes sense for [selection]. */
     fun fits(selection: Selection): Boolean = when (this) {
@@ -434,6 +435,38 @@ private fun AdjustSlider(label: String, value: Float, onDone: () -> Unit, onChan
     Labeled(label, "%+d".format((value * 100).toInt())) {
         Slider(value = value, onValueChange = onChange, onValueChangeFinished = onDone, valueRange = -1f..1f)
     }
+}
+
+/** Film grain over the whole picture; see Grain for what it does. */
+@Composable
+fun GrainPanel(vm: EditorViewModel, project: Project) {
+    val l = project.look
+    Text(stringResource(R.string.grain_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Labeled(stringResource(R.string.grain_amount), if (l.grain <= 0f) stringResource(R.string.grain_off) else "${(l.grain * 100).roundToInt()}%") {
+        Slider(
+            value = l.grain,
+            onValueChange = { v -> vm.preview { it.copy(look = it.look.copy(grain = v)) } },
+            onValueChangeFinished = vm::commit,
+        )
+    }
+    Labeled(stringResource(R.string.grain_size), stringResource(grainSizeLabel(l.grainSize))) {
+        Slider(
+            value = l.grainSize,
+            onValueChange = { v -> vm.preview { it.copy(look = it.look.copy(grainSize = v)) } },
+            onValueChangeFinished = vm::commit,
+        )
+    }
+    if (l.grain > 0f || l.grainSize != VideoLook.DEFAULT_GRAIN_SIZE) {
+        TextButton(onClick = { vm.edit { it.copy(look = it.look.copy(grain = 0f, grainSize = VideoLook.DEFAULT_GRAIN_SIZE)) } }) {
+            Text(stringResource(R.string.reset))
+        }
+    }
+}
+
+private fun grainSizeLabel(size: Float) = when {
+    size < 1f / 3 -> R.string.grain_fine
+    size < 2f / 3 -> R.string.grain_medium
+    else -> R.string.grain_coarse
 }
 
 @Composable

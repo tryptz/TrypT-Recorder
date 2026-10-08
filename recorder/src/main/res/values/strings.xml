@@ -141,6 +141,14 @@
     <string name="tool_position">Position</string>
     <string name="tool_text">Text</string>
     <string name="tool_canvas">Canvas</string>
+    <string name="tool_grain">Grain</string>
+    <string name="grain_hint">Film grain over the whole picture: luminance only, strongest in the midtones, fresh every frame, and sized to the frame so preview and export match. It goes on after colour, under fades and titles.</string>
+    <string name="grain_amount">Amount</string>
+    <string name="grain_size">Size</string>
+    <string name="grain_off">Off</string>
+    <string name="grain_fine">Fine</string>
+    <string name="grain_medium">Medium</string>
+    <string name="grain_coarse">Coarse</string>
     <string name="tool_filters">Filters</string>
     <string name="tool_adjust">Adjust</string>
     <string name="trim_start_here">Start at playhead</string>

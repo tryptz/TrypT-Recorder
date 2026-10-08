@@ -9,7 +9,7 @@ repository; this repository is its standalone home.
 ## Build and test
 
 ```
-./gradlew :recorder:testDebugUnitTest    # 128 JVM tests, no device
+./gradlew :recorder:testDebugUnitTest    # 137 JVM tests, no device
 ./gradlew :recorder:lintDebug            # clean: 0 errors, 0 warnings
 ./gradlew :recorder:assembleDebug        # signed with the committed recorder/debug.keystore
 ./gradlew :recorder:assembleRelease      # R8-minified, ~4 MB
@@ -105,6 +105,9 @@ the rate while moving (`FrameTiming`) beside the file's average.
   flip.
 - Look: filters (mono, sepia, vivid, cool, warm, invert), brightness, contrast,
   saturation, fade in from / out to black.
+- **Film grain**: amount and size (fine to coarse) — luminance-only Gaussian
+  grain, strongest in the midtones, fresh every frame, the same in preview
+  and export.
 - Undo/redo (a slider drag is one step), drafts autosaved as JSON.
 - Export resolution (original, 1080p, 720p, 480p) and quality.
 
@@ -130,7 +133,7 @@ recorder/src/main/java/tf/monochrome/recorder/
 
 The rule that keeps it testable without a phone: decisions live in pure Kotlin
 (`CapturePlanner`, `PauseClock`, `Pcm`, `Timeline`, `History`,
-`ExportPlanner`, `CropBox`, and for GIFs `FrameSampler`, `YuvFrame`,
+`ExportPlanner`, `CropBox`, `Grain`, and for GIFs `FrameSampler`, `YuvFrame`,
 `GifPalette`, `GifEncoder`), and the Android/Media3 layers only carry them out.
 
 ### Why things are the way they are
@@ -190,6 +193,25 @@ The rule that keeps it testable without a phone: decisions live in pure Kotlin
   exactly over the frame and dragging it never rebuilds the player. Drags are
   measured from where they began, so a handle held at the picture's edge
   stays under the finger when it comes back; each drag is one undo step.
+- **Film grain is a shader of its own** (`FilmGrain`, a Media3 `GlEffect`),
+  since Media3 has none. What makes it look like film rather than noise:
+  luminance only, so no colour speckle; close to Gaussian (four hashes
+  summed); strongest in the midtones and a fifth as strong at black and white
+  (`Grain.response`); two layers, the finer one at half size, for clumps
+  with texture. The noise grid is read with smooth interpolation and rescaled
+  to the same strength everywhere, because plain interpolation is weaker
+  between grid points and shows as a mesh. The hash avoids `sin`, which loses
+  precision on mobile GPUs. Grain is added to gamma-encoded values: that is
+  what Media3 hands SDR effects (its builder starts at
+  `WORKING_COLOR_SPACE_DEFAULT`, whatever the javadoc says); HDR frames come
+  linear and are encoded around the grain. It sits after colour and before
+  fades and titles, so a fade ends on clean black and titles stay crisp.
+  Size is relative to the frame, so the 720p preview matches the export, and
+  grains smaller than a pixel fade in proportion — a pixel averages them — so
+  a small GIF is not grainier than its video. Each frame's grain is seeded
+  from its composition time: fresh every frame, identical in preview and
+  export. The shader source was run on Mesa (llvmpipe) to check its strength,
+  midtone response, evenness and frame-to-frame independence.
 - **Time-based effects** (fades, titles) use composition time. Both
   `CompositionPlayer` and `Transformer` hand per-item effects composition-time
   timestamps (checked in the 1.10.1 sources: `VideoEncoderGraphInput` adds each
@@ -256,6 +278,8 @@ emulator, so none of it has run on a phone. Before a release, check at least:
 - [ ] Editor preview plays, seeks and updates for every tool; export in all
       three modes; detached audio lines up after export.
 - [ ] Titles and fades appear at the same times in preview and export.
+- [ ] Film grain: fine and natural at 1:1 on the phone, the same in preview
+      and export, moving every frame; no mesh or banding at coarse size.
 - [ ] Crop tool: the box sits exactly over the picture; corners, edges and
       the inside each grab and follow the finger; a held shape stays held;
       the export matches the box — also after Rotate and Flip.

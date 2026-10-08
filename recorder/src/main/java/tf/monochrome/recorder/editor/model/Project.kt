@@ -111,7 +111,16 @@ data class VideoLook(
     val fadeInUs: Long = 0,
     /** Fade out to black at the end. */
     val fadeOutUs: Long = 0,
-)
+    /** Film grain, 0 = none .. 1 = heavy. */
+    val grain: Float = 0f,
+    /** 0 = finest .. 1 = coarsest grain. */
+    val grainSize: Float = DEFAULT_GRAIN_SIZE,
+) {
+    companion object {
+        /** "Fine": grains of about 1.5 px on a 1080-pixel short side. */
+        const val DEFAULT_GRAIN_SIZE = 0.15f
+    }
+}
 
 enum class AspectPreset(val ratio: Float?) {
     ORIGINAL(null),
