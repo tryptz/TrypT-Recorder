@@ -197,6 +197,7 @@ fun RecordScreen(onEdit: (Uri) -> Unit, modifier: Modifier = Modifier) {
             Card {
                 Text(stringResource(R.string.last_recording), style = MaterialTheme.typography.titleSmall)
                 Text(saved.displayName, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                MediaSummaryLine(saved.uri.toUri(), Modifier.padding(top = 2.dp))
                 Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     val uri = saved.uri.toUri()
                     OutlinedButton(onClick = { onEdit(uri) }) {

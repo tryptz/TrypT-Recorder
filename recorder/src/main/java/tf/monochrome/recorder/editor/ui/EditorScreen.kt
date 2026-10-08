@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Gradient
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -84,6 +85,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
@@ -94,6 +96,7 @@ import tf.monochrome.recorder.editor.export.ExportSettings
 import tf.monochrome.recorder.editor.export.ExportState
 import tf.monochrome.recorder.editor.export.PlanResult
 import tf.monochrome.recorder.editor.model.AudioKind
+import tf.monochrome.recorder.editor.model.MediaRef
 import tf.monochrome.recorder.editor.model.Project
 import tf.monochrome.recorder.editor.model.assignLanes
 import tf.monochrome.recorder.editor.model.deleteAudio
@@ -109,6 +112,7 @@ import tf.monochrome.recorder.editor.model.splitAt
 import tf.monochrome.recorder.editor.model.splitAudioAt
 import tf.monochrome.recorder.editor.model.updateText
 import tf.monochrome.recorder.ui.ExportStatusDialog
+import tf.monochrome.recorder.ui.MediaDetailsDialog
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -130,6 +134,7 @@ fun EditorScreen(projectId: String, onClose: () -> Unit) {
     var zoom by rememberSaveable { mutableFloatStateOf(48f) }
     var exportSettings by remember { mutableStateOf(ExportSettings()) }
     var renaming by remember { mutableStateOf(false) }
+    var detailsOf by remember { mutableStateOf<MediaRef?>(null) }
 
     val clipPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) scope.launch { vm.addClips(uris) }
@@ -276,6 +281,7 @@ fun EditorScreen(projectId: String, onClose: () -> Unit) {
                         addClip = { clipPicker.launch(arrayOf("video/*")) },
                         addAudio = { audioPicker.launch(arrayOf("audio/*")) },
                         addTextLabel = stringResource(R.string.text_default),
+                        showDetails = { detailsOf = it },
                     ),
                 )
             } else {
@@ -316,6 +322,8 @@ fun EditorScreen(projectId: String, onClose: () -> Unit) {
         },
     )
 
+    detailsOf?.let { ref -> MediaDetailsDialog(ref.uri.toUri(), ref.displayName) { detailsOf = null } }
+
     if (renaming) {
         var name by remember { mutableStateOf(project.name) }
         AlertDialog(
@@ -345,6 +353,7 @@ private fun actionsFor(
     addClip: () -> Unit,
     addAudio: () -> Unit,
     addTextLabel: String,
+    showDetails: (MediaRef) -> Unit,
 ): List<EditorAction> = when (selection) {
     Selection.None -> listOf(
         EditorAction(Icons.Filled.VideoLibrary, stringResource(R.string.action_add_clip), onClick = addClip),
@@ -371,6 +380,7 @@ private fun actionsFor(
                 }
             },
             EditorAction(Icons.Filled.ContentCopy, stringResource(R.string.action_duplicate)) { vm.edit { it.duplicateClip(selection.id) } },
+            EditorAction(Icons.Filled.Info, stringResource(R.string.action_details), clip != null) { clip?.let { showDetails(it.source) } },
             EditorAction(Icons.Filled.ChevronLeft, stringResource(R.string.action_move_earlier)) { vm.edit { it.moveClip(selection.id, -1) } },
             EditorAction(Icons.Filled.ChevronRight, stringResource(R.string.action_move_later)) { vm.edit { it.moveClip(selection.id, 1) } },
             EditorAction(Icons.Filled.Delete, stringResource(R.string.action_delete)) { vm.edit { it.deleteClip(selection.id) } },
@@ -384,6 +394,7 @@ private fun actionsFor(
             EditorAction(Icons.AutoMirrored.Filled.VolumeUp, stringResource(R.string.tool_volume)) { openTool(Tool.VOLUME) },
             EditorAction(Icons.Filled.Gradient, stringResource(R.string.tool_fades)) { openTool(Tool.AUDIO_FADES) },
             EditorAction(Icons.Filled.SettingsEthernet, stringResource(R.string.tool_position)) { openTool(Tool.AUDIO_POSITION) },
+            EditorAction(Icons.Filled.Info, stringResource(R.string.action_details), clip != null) { clip?.let { showDetails(it.source) } },
             clip?.takeIf { it.kind == AudioKind.DETACHED && it.linkedClipId != null }?.let { c ->
                 EditorAction(Icons.AutoMirrored.Filled.CallMerge, stringResource(R.string.action_restore_audio)) { vm.edit { it.restoreAudio(c.linkedClipId!!) } }
             },

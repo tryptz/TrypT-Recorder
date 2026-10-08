@@ -142,7 +142,12 @@ fun ExportStatusDialog(state: ExportState, onCancel: () -> Unit, onDismiss: () -
         is ExportState.Done -> AlertDialog(
             onDismissRequest = onDismiss,
             title = { Text(stringResource(R.string.export_done)) },
-            text = { Text(stringResource(R.string.toast_saved, state.saved.relativePath + state.saved.displayName)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(stringResource(R.string.toast_saved, state.saved.relativePath + state.saved.displayName))
+                    MediaSummaryLine(state.saved.uri.toUri())
+                }
+            },
             confirmButton = {
                 TextButton(onClick = {
                     val mime = if (state.mode == ExportMode.AUDIO_ONLY) "audio/mp4" else "video/mp4"

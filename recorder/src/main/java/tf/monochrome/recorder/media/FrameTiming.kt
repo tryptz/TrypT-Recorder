@@ -15,10 +15,20 @@ object FrameTiming {
      * sorted gaps (the shortest few can be encoder jitter). 0 if there are not
      * enough frames to tell.
      */
-    fun peakFrameRate(sampleTimesUs: List<Long>): Float {
-        val gaps = sampleTimesUs.sorted().zipWithNext { a, b -> b - a }.filter { it > 0 }.sorted()
-        if (gaps.size < 2) return 0f
-        val gap = gaps[gaps.size / 10]
-        return 1_000_000f / gap
+    fun peakFrameRate(sampleTimesUs: List<Long>): Float =
+        peakFrameRate(sampleTimesUs.toLongArray(), sampleTimesUs.size)
+
+    /** The same over the first [count] entries of [timesUs], without boxing — a long recording has a lot of frames. */
+    fun peakFrameRate(timesUs: LongArray, count: Int): Float {
+        val sorted = timesUs.copyOf(count).also { it.sort() }
+        var n = 0
+        val gaps = LongArray(maxOf(count - 1, 0))
+        for (i in 1 until count) {
+            val gap = sorted[i] - sorted[i - 1]
+            if (gap > 0) gaps[n++] = gap
+        }
+        if (n < 2) return 0f
+        gaps.sort(0, n)
+        return 1_000_000f / gaps[n / 10]
     }
 }

@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.AudioFile
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DriveFileRenameOutline
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
@@ -99,6 +100,7 @@ fun LibraryScreen(
     var renaming by remember { mutableStateOf<Recording?>(null) }
     var deleting by remember { mutableStateOf<Recording?>(null) }
     var deletingDraft by remember { mutableStateOf<ProjectSummary?>(null) }
+    var detailsOf by remember { mutableStateOf<Recording?>(null) }
 
     LaunchedEffect(Unit) { store.refresh() }
 
@@ -207,6 +209,7 @@ fun LibraryScreen(
             SheetAction(Icons.Filled.Edit, stringResource(R.string.action_edit)) { acting = null; onEditUris(listOf(r.uri)) }
             SheetAction(Icons.Filled.PlayArrow, stringResource(R.string.action_play)) { acting = null; play(context, r.uri) }
             SheetAction(Icons.Filled.Share, stringResource(R.string.action_share)) { acting = null; share(context, r.uri, "video/mp4") }
+            SheetAction(Icons.Filled.Info, stringResource(R.string.action_details)) { acting = null; detailsOf = r }
             SheetAction(Icons.Filled.AudioFile, stringResource(R.string.action_extract_audio)) {
                 acting = null
                 scope.launch {
@@ -268,6 +271,8 @@ fun LibraryScreen(
             dismissButton = { TextButton(onClick = { deletingDraft = null }) { Text(stringResource(R.string.action_cancel)) } },
         )
     }
+
+    detailsOf?.let { r -> MediaDetailsDialog(r.uri, r.name) { detailsOf = null } }
 
     ExportStatusDialog(exportState, onCancel = ExportManager::cancel, onDismiss = ExportManager::acknowledge)
 }

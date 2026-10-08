@@ -9,7 +9,7 @@ repository; this repository is its standalone home.
 ## Build and test
 
 ```
-./gradlew :recorder:testDebugUnitTest    # 72 JVM tests, no device
+./gradlew :recorder:testDebugUnitTest    # 80 JVM tests, no device
 ./gradlew :recorder:lintDebug            # clean: 0 errors, 0 warnings
 ./gradlew :recorder:assembleDebug        # signed with the committed recorder/debug.keystore
 ./gradlew :recorder:assembleRelease      # R8-minified, ~4 MB
@@ -66,6 +66,16 @@ The signer's SHA-256 must start `80:11:86:31`.
 - Saved to `Movies/TryptifyRecorder` through MediaStore (pending until finished,
   so galleries never show half a file). A "saved" notification offers Edit and
   Share.
+
+**File details** — read back from the file itself, not from the settings:
+container, duration, size and overall bitrate; video codec with H.264 profile
+and level, resolution, frame rate, video bitrate and frame count; audio codec
+(AAC object type), sample rate, channels and audio bitrate. *Details* in the
+library and for editor clips, with *Copy* for the whole sheet; a one-line
+summary under "Last recording" and in "Export finished". Bitrates are measured
+from the samples in the file. A screen recording has a variable frame rate —
+the screen only sends frames while something changes — so the frame rate shows
+the rate while moving (`FrameTiming`) beside the file's average.
 
 **Editing** — preview with Media3 `CompositionPlayer`, export with Media3
 `Transformer`, both fed the same `Composition`, so the preview is the export.
@@ -178,6 +188,9 @@ emulator, so none of it has run on a phone. Before a release, check at least:
       with two microphones.
 - [ ] The saved notification reads "320 kbps stereo audio", and a media-info
       app agrees about the file (device audio: a game or music playing).
+- [ ] Library → Details on a fresh recording: H.264 profile/level, 165 fps
+      while moving, ~320 kbps AAC-LC stereo — and the same figures as a
+      media-info app.
 - [ ] On a 165 Hz phone, a game recorded at 165 fps: check the file's frame
       rate in a media-info app, and logcat `EncoderFit` for any step-down.
 - [ ] Floating button: drag, snap, tap to record, pause/stop, long-press menu,

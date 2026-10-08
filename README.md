@@ -19,6 +19,8 @@ Android 10 or newer.
   noise), microphone (stereo where the phone has the microphones), both mixed,
   or none.
 - Pause and resume, countdown. Saved to `Movies/TryptifyRecorder`.
+- **File details** read back from each video: codec, profile and level,
+  resolution, frame rate, video and audio bitrate, sample rate, channels.
 
 ## Editing
 
