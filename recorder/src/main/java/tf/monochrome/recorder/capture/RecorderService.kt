@@ -283,7 +283,7 @@ class RecorderService : Service() {
                 val ok = rec.stop()
                 when {
                     out == null -> null
-                    ok -> out.publish(contentResolver)
+                    ok -> out.publish(contentResolver)?.copy(audioKbps = rec.audioBitrate / 1000)
                     else -> { out.discard(contentResolver); null }
                 }
             }
@@ -446,7 +446,10 @@ class RecorderService : Service() {
         val n = NotificationCompat.Builder(this, RecorderApp.CHANNEL_SAVED)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(getString(R.string.notif_saved_title))
-            .setContentText(saved.displayName)
+            .setContentText(
+                if (saved.audioKbps > 0) getString(R.string.notif_saved_text, saved.displayName, saved.audioKbps)
+                else saved.displayName,
+            )
             .setAutoCancel(true)
             .setContentIntent(edit)
             .addAction(0, getString(R.string.action_edit), edit)

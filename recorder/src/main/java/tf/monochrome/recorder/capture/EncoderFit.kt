@@ -73,15 +73,43 @@ object EncoderFit {
         return caps.supportedPerformancePoints.orEmpty().any { it.covers(wanted) }
     }
 
-    /** [requested] AAC bitrate, held to what this phone's AAC encoder accepts. */
-    fun aacBitrate(requested: Int): Int = runCatching {
-        val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, ScreenRecorder.SAMPLE_RATE, 2)
-        val range = encoderCaps(format, MediaFormat.MIMETYPE_AUDIO_AAC)?.audioCapabilities?.bitrateRange
-            ?: return@runCatching requested
-        requested.coerceIn(range.lower, range.upper).also {
-            if (it != requested) Log.i(TAG, "AAC bitrate $requested -> $it (encoder limit)")
+    /**
+     * The AAC encoder to use for [bitrate] at this format — see [AacPicker]
+     * for the rule. Shared by the recorder and the exporter, so a recording
+     * and its edit get the same encoder and the same 320 kbps.
+     */
+    fun aacEncoder(bitrate: Int, sampleRate: Int, channels: Int): AacChoice = runCatching {
+        val candidates = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
+            .filter { info -> info.isEncoder && info.supportedTypes.any { it.equals(MediaFormat.MIMETYPE_AUDIO_AAC, ignoreCase = true) } }
+            .mapNotNull { info ->
+                val caps = runCatching { info.getCapabilitiesForType(MediaFormat.MIMETYPE_AUDIO_AAC) }.getOrNull()
+                val audio = caps?.audioCapabilities ?: return@mapNotNull null
+                AacCandidate(
+                    name = info.name,
+                    formatOk = audio.isSampleRateSupported(sampleRate) && audio.maxInputChannelCount >= channels,
+                    minBitrate = audio.bitrateRange.lower,
+                    maxBitrate = audio.bitrateRange.upper,
+                    cbr = caps.encoderCapabilities?.isBitrateModeSupported(
+                        MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR,
+                    ) == true,
+                )
+            }
+        AacPicker.pick(candidates, bitrate).also {
+            Log.i(TAG, "AAC: ${it.name ?: "platform default"} at ${it.bitrate} bps, cbr=${it.cbr} (from ${candidates.map { c -> c.name }})")
         }
-    }.getOrDefault(requested)
+    }.getOrElse {
+        Log.w(TAG, "AAC encoder query failed", it)
+        AacChoice(null, bitrate, cbr = false)
+    }
+
+    /** The AAC MediaFormat for [choice]. [cbr] false leaves the mode to the encoder. */
+    fun aacFormat(choice: AacChoice, sampleRate: Int, channels: Int, cbr: Boolean = choice.cbr): MediaFormat =
+        MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, channels).apply {
+            setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
+            setInteger(MediaFormat.KEY_BIT_RATE, choice.bitrate)
+            // Constant bitrate: 320 kbps stays 320 through quiet passages too.
+            if (cbr) setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
+        }
 
     private fun avcEncoderCaps(): MediaCodecInfo.VideoCapabilities? =
         encoderCaps(MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, 1280, 720), MediaFormat.MIMETYPE_VIDEO_AVC)

@@ -88,7 +88,7 @@ object ExportManager {
         val t = Transformer.Builder(app)
             .setAudioMimeType(MimeTypes.AUDIO_AAC)
             .apply { if (!audioOnly) setVideoMimeType(MimeTypes.VIDEO_H264) }
-            .setEncoderFactory(encoders)
+            .setEncoderFactory(AacEncoderFactory(app, encoders, plan.audioBitrate))
             .addListener(object : Transformer.Listener {
                 override fun onCompleted(composition: Composition, exportResult: ExportResult) {
                     finish(app, plan.mode, tmp, name)

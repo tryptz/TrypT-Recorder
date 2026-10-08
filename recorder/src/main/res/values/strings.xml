@@ -14,6 +14,7 @@
     <string name="notif_paused">Paused</string>
     <string name="notif_saving">Saving…</string>
     <string name="notif_saved_title">Recording saved</string>
+    <string name="notif_saved_text">%1$s · %2$d kbps stereo audio</string>
     <string name="action_record">Record</string>
     <string name="action_hide_button">Hide button</string>
     <string name="action_cancel">Cancel</string>

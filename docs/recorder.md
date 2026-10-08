@@ -9,7 +9,7 @@ repository; this repository is its standalone home.
 ## Build and test
 
 ```
-./gradlew :recorder:testDebugUnitTest    # 66 JVM tests, no device
+./gradlew :recorder:testDebugUnitTest    # 72 JVM tests, no device
 ./gradlew :recorder:lintDebug            # clean: 0 errors, 0 warnings
 ./gradlew :recorder:assembleDebug        # signed with the committed recorder/debug.keystore
 ./gradlew :recorder:assembleRelease      # R8-minified, ~4 MB
@@ -135,6 +135,16 @@ The rule that keeps it testable without a phone: decisions live in pure Kotlin
   (`FrameTiming`) — the average would understate a variable-rate recording that
   sat still for a while. A 165 fps clip exports with 165/60 of the bits a 60 fps
   one gets. Exported audio is 320 kbps too; Media3's default is 128.
+- **320 kbps is chosen, not just asked for.** Creating "the" AAC encoder by
+  type takes whichever the phone lists first, often a vendor hardware encoder,
+  and some of those top out below 320 kbps — asking for 320 then quietly gives
+  less. `AacPicker` takes only an encoder that accepts 48 kHz stereo *and* whose
+  range includes 320 kbps, Android's own FDK-AAC encoder first, and sets
+  constant bitrate where the encoder declares it. Exports use the same rule
+  through `AacEncoderFactory`, since Media3's factory has no way to choose the
+  audio encoder. The "Recording saved" notification states the bitrate the
+  encoder was configured with, so a phone that genuinely cannot reach 320 says
+  so instead of hiding it.
 - **Muxer gate.** The debug recorder blocked a drain thread up to a second per
   sample waiting for the other track's format. Samples now queue until the muxer
   can start, and if audio never produces a format the file is written without it
@@ -166,6 +176,8 @@ emulator, so none of it has run on a phone. Before a release, check at least:
 - [ ] Record with each audio source; play back; A/V sync after a long recording
       and across pause/resume. Mic recordings are really stereo on a phone
       with two microphones.
+- [ ] The saved notification reads "320 kbps stereo audio", and a media-info
+      app agrees about the file (device audio: a game or music playing).
 - [ ] On a 165 Hz phone, a game recorded at 165 fps: check the file's frame
       rate in a media-info app, and logcat `EncoderFit` for any step-down.
 - [ ] Floating button: drag, snap, tap to record, pause/stop, long-press menu,

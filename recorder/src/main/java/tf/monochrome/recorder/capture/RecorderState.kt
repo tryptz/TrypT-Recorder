@@ -33,7 +33,13 @@ sealed interface CaptureStatus {
 }
 
 /** A finished recording, as handed to the UI and the "saved" notification. */
-data class SavedRecording(val uri: String, val displayName: String, val relativePath: String)
+data class SavedRecording(
+    val uri: String,
+    val displayName: String,
+    val relativePath: String,
+    /** AAC bitrate the recording's sound was encoded at, kbps; 0 for none (or not a recording). */
+    val audioKbps: Int = 0,
+)
 
 /**
  * Process-wide recording state. The service is the only writer; the home

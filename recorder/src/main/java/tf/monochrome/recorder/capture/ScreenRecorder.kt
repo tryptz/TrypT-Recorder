@@ -8,7 +8,6 @@ import android.media.AudioFormat
 import android.media.AudioPlaybackCaptureConfiguration
 import android.media.AudioRecord
 import android.media.MediaCodec
-import android.media.MediaCodecInfo
 import android.media.MediaFormat
 import android.media.MediaMuxer
 import android.media.MediaRecorder
@@ -81,6 +80,10 @@ class ScreenRecorder(
     var effectiveAudio: AudioSource = AudioSource.NONE
         private set
 
+    /** AAC bitrate the encoder was configured with, in bits/s; 0 when recording without sound. */
+    var audioBitrate: Int = 0
+        private set
+
     val isPaused: Boolean get() = clock.isPaused
 
     /**
@@ -124,13 +127,25 @@ class ScreenRecorder(
 
         // ── Audio ───────────────────────────────────────────────────────
         if (effectiveAudio != AudioSource.NONE) {
-            val aFormat = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, SAMPLE_RATE, 2).apply {
-                setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
-                setInteger(MediaFormat.KEY_BIT_RATE, EncoderFit.aacBitrate(AUDIO_BITRATE))
-                setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, BLOCK_FRAMES * 4 * 2)
+            val aac = EncoderFit.aacEncoder(AUDIO_BITRATE, SAMPLE_RATE, 2)
+            val aCodec = aac.name?.let { MediaCodec.createByCodecName(it) }
+                ?: MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
+            val inputSize = BLOCK_FRAMES * 4 * 2
+            try {
+                aCodec.configure(
+                    EncoderFit.aacFormat(aac, SAMPLE_RATE, 2).apply { setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, inputSize) },
+                    null, null, MediaCodec.CONFIGURE_FLAG_ENCODE,
+                )
+            } catch (e: Exception) {
+                // An encoder that lists CBR but refuses it here: same bitrate, its own mode.
+                Log.w(TAG, "AAC encoder refused CBR; configuring without it", e)
+                aCodec.reset()
+                aCodec.configure(
+                    EncoderFit.aacFormat(aac, SAMPLE_RATE, 2, cbr = false).apply { setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, inputSize) },
+                    null, null, MediaCodec.CONFIGURE_FLAG_ENCODE,
+                )
             }
-            val aCodec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
-            aCodec.configure(aFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            audioBitrate = aac.bitrate
             aCodec.start()
             audioCodec = aCodec
             deviceRecord?.startRecording()
