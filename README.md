@@ -28,7 +28,8 @@ Android 10 or newer.
   duplicate, reorder.
 - **Detach audio**: a clip's sound becomes its own piece on an audio track, to
   move, trim, split, fade or delete independently; *Restore audio* puts it back.
-- Export as video, **video without sound**, or **sound only** (M4A) — plus a
+- Export as video, **video without sound**, **sound only** (M4A), or a
+  looping **GIF** (320–640p, 10–25 fps, with every edit in it) — plus a
   one-tap *Extract audio* in the library.
 - Music tracks, titles, aspect ratio, crop, rotate, flip, filters, brightness,
   contrast, saturation, fades. Undo/redo; drafts save themselves.

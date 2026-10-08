@@ -9,7 +9,7 @@ repository; this repository is its standalone home.
 ## Build and test
 
 ```
-./gradlew :recorder:testDebugUnitTest    # 80 JVM tests, no device
+./gradlew :recorder:testDebugUnitTest    # 115 JVM tests, no device
 ./gradlew :recorder:lintDebug            # clean: 0 errors, 0 warnings
 ./gradlew :recorder:assembleDebug        # signed with the committed recorder/debug.keystore
 ./gradlew :recorder:assembleRelease      # R8-minified, ~4 MB
@@ -89,6 +89,10 @@ the rate while moving (`FrameTiming`) beside the file's average.
   picture; *Restore audio* puts it back. Export as *Video, no sound* (silent
   MP4) or *Sound only* (M4A in `Music/TryptifyRecorder`); the library also has a
   one-tap *Extract audio*.
+- **GIF export**: the edited picture as a looping animated GIF in
+  `Pictures/TryptifyRecorder` — 320p, 480p or 640p on the short side (never
+  above the source's), 10, 15, 20 or 25 fps. Every edit is in it: cuts, speed,
+  canvas, look, titles, fades.
 - Music and other audio files on lanes; overlapping pieces mix.
 - Titles: text, position, size, colour, background box, start/end on the
   timeline.
@@ -110,6 +114,8 @@ recorder/src/main/java/tf/monochrome/recorder/
   editor/    model/  Project, Timeline ops, History      — pure, JVM-tested
              export/ ExportPlanner (pure) → CompositionFactory (Media3),
                      Effects, ExportManager
+                     gif/ FrameSampler, YuvFrame, GifPalette, GifEncoder
+                          (pure) ← GifTranscoder (MediaCodec)
              ui/     EditorViewModel, EditorScreen, TimelineView, ToolPanels
              store/  ProjectStore (drafts)
   media/     MediaStoreFile, MediaProbe, Thumbnails, RecordingsRepository
@@ -119,7 +125,8 @@ recorder/src/main/java/tf/monochrome/recorder/
 
 The rule that keeps it testable without a phone: decisions live in pure Kotlin
 (`CapturePlanner`, `PauseClock`, `Pcm`, `Timeline`, `History`,
-`ExportPlanner`), and the Android/Media3 layers only carry them out.
+`ExportPlanner`, and for GIFs `FrameSampler`, `YuvFrame`, `GifPalette`,
+`GifEncoder`), and the Android/Media3 layers only carry them out.
 
 ### Why things are the way they are
 
@@ -172,6 +179,40 @@ The rule that keeps it testable without a phone: decisions live in pure Kotlin
   `CompositionPlayer` and `Transformer` hand per-item effects composition-time
   timestamps (checked in the 1.10.1 sources: `VideoEncoderGraphInput` adds each
   item's offset), so a title lands at the same moment in preview and export.
+- **A GIF is made in two steps.** Transformer renders the project as a silent
+  MP4 at the GIF's size and high quality — the same Composition as every
+  other export, so every edit is in it — and `GifTranscoder` decodes that
+  with MediaCodec and writes the GIF in Kotlin (`GifEncoder`, no library).
+  Three things in the decoded video are not what they seem: Transformer
+  encodes a portrait picture lying on its side with a rotation flag, which
+  a GIF cannot carry, so frames are turned upright while converting; the
+  decoder's crop may include padding, so the track's size wins; and colours
+  are BT.709 limited range unless the file says otherwise.
+- **GIF frames follow the video's own timing.** A GIF has a fixed frame rate,
+  a screen recording does not. GIF frame k shows the latest video frame at or
+  before k / fps — never the nearest, which would show a change early — and
+  frames are held until the next one's time is known, so only the ones that
+  are shown get converted (`FrameSampler`). Delays are rounded on the running
+  total, so 15 fps comes out 7, 7, 6 hundredths and the GIF lasts exactly as
+  long as the video. Media3's `FrameDropEffect` would have saved rendering
+  work, but it drops each clip's last frame — on a still screen that frame
+  can be on screen for seconds.
+- **One palette for the whole GIF**, from a first decoding pass over up to 120
+  frames: median cut over a 32-level-per-channel histogram that also keeps
+  each cell's exact mean, so a flat colour (an app bar, a dark background)
+  comes back exact. Per-frame palettes would flicker.
+- **Dither only where needed, and by position.** A pixel within a few levels
+  of a palette colour takes it plainly, so flat UI stays clean; the rest get
+  an 8×8 Bayer dither. Ordered rather than error diffusion because its
+  pattern depends only on the pixel's position: an unchanged area comes out
+  the same every frame, so it neither shimmers nor costs bytes.
+- **Each GIF frame sends only what changed**: pixels that would come out as
+  the colour already shown are transparent, the frame is cut to the box
+  around the rest, and a frame with no change just lengthens the one before.
+  Only an exact match counts: letting near matches stand saved 12 % on a test
+  clip, but drew contours across a slowly changing gradient. The encoder was
+  checked against Pillow, ImageMagick and ffmpeg, which decode its files
+  identically.
 - **Media3 1.10.1** (catalog key `media3Editor`): the editor needs track-typed
   sequences, gaps and `CompositionPlayer`, none of which older releases have.
   Not 1.11.x: it pulls kotlin-stdlib 2.2.10, newer than this build's Kotlin
@@ -200,6 +241,10 @@ emulator, so none of it has run on a phone. Before a release, check at least:
 - [ ] Editor preview plays, seeks and updates for every tool; export in all
       three modes; detached audio lines up after export.
 - [ ] Titles and fades appear at the same times in preview and export.
+- [ ] GIF export of a portrait recording comes out upright, in
+      `Pictures/TryptifyRecorder`, loops, and plays at the chosen rate in a
+      browser and a chat app; cancel mid-way leaves no file; a still stretch
+      stays a single long frame.
 - [ ] Drafts reopen after the app is killed (persisted document permissions).
 
 Known limits: exports run in-app (the screen is kept on while one runs) rather

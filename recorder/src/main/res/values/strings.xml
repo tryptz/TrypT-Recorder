@@ -88,7 +88,7 @@
     <string name="settings_hide_button">Hide floating button while recording</string>
     <string name="settings_hide_button_hint">Keeps it out of the video. Stop from the notification or the Quick Settings tile.</string>
     <string name="settings_storage">Storage</string>
-    <string name="settings_storage_text">Videos are saved to %1$s, extracted audio to %2$s.</string>
+    <string name="settings_storage_text">Videos are saved to %1$s, extracted audio to %2$s, GIFs to %3$s.</string>
     <string name="settings_about">About</string>
     <string name="settings_about_text">Tryptify Recorder grew out of the debug screen recorder in Tryptify: native-quality capture with the device’s own audio recorded digitally, now with a floating button and a video editor.</string>
     <string name="resolution_native">Native (screen)</string>
@@ -224,10 +224,15 @@
     <string name="export_mode_video_hint">Picture and every sound, mixed — an MP4.</string>
     <string name="export_mode_video_only_hint">The picture alone, silent — an MP4.</string>
     <string name="export_mode_audio_only_hint">The soundtrack alone, mixed — an M4A in Music.</string>
+    <string name="export_mode_gif">GIF</string>
+    <string name="export_mode_gif_hint">The picture alone as a looping GIF in Pictures — no sound, at most 255 colours. Best kept short: a GIF grows quickly with length, size and frame rate.</string>
     <string name="export_resolution">Resolution</string>
     <string name="export_quality">Quality</string>
+    <string name="export_gif_size">Size</string>
+    <string name="export_gif_frame_rate">Frame rate</string>
     <string name="export_running">Exporting video</string>
     <string name="export_running_audio">Exporting audio</string>
+    <string name="export_running_gif">Making GIF</string>
     <string name="export_preparing">Preparing…</string>
     <string name="export_keep_open">Keep the app open until it finishes.</string>
     <string name="export_done">Export finished</string>

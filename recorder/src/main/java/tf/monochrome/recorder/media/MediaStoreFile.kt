@@ -25,12 +25,15 @@ class MediaStoreFile private constructor(
     enum class Kind(val mime: String, val extension: String, val root: String) {
         VIDEO("video/mp4", ".mp4", "Movies"),
         AUDIO("audio/mp4", ".m4a", "Music"),
+        // An image: MediaStore only takes those under Pictures/ or DCIM/.
+        GIF("image/gif", ".gif", "Pictures"),
         ;
 
         val collection: Uri
             get() = when (this) {
                 VIDEO -> MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
                 AUDIO -> MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                GIF -> MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
             }
     }
 
@@ -49,7 +52,7 @@ class MediaStoreFile private constructor(
     }
 
     companion object {
-        /** Folder under Movies/ or Music/ everything this app writes goes into. */
+        /** Folder under Movies/, Music/ or Pictures/ everything this app writes goes into. */
         fun relativePath(kind: Kind) = "${kind.root}/${RecorderApp.FOLDER}"
 
         /** Keeps a user-typed name to characters every file system accepts. */

@@ -37,6 +37,8 @@ import tf.monochrome.recorder.editor.export.ExportMode
 import tf.monochrome.recorder.editor.export.ExportQuality
 import tf.monochrome.recorder.editor.export.ExportResolution
 import tf.monochrome.recorder.editor.export.ExportSettings
+import tf.monochrome.recorder.editor.export.GifFrameRate
+import tf.monochrome.recorder.editor.export.GifSize
 import tf.monochrome.recorder.editor.model.AspectPreset
 import tf.monochrome.recorder.editor.model.AudioClip
 import tf.monochrome.recorder.editor.model.CropInsets
@@ -393,7 +395,24 @@ fun ExportPanel(settings: ExportSettings, onChange: (ExportSettings) -> Unit, on
         }
     }
     Text(stringResource(exportModeHint(settings.mode)), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    if (settings.mode != ExportMode.AUDIO_ONLY) {
+    if (settings.mode == ExportMode.GIF) {
+        Text(stringResource(R.string.export_gif_size), style = MaterialTheme.typography.labelLarge)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            GifSize.entries.forEach { g ->
+                FilterChip(selected = settings.gifSize == g, onClick = { onChange(settings.copy(gifSize = g)) }, label = { Text("${g.shortSide}p") })
+            }
+        }
+        Text(stringResource(R.string.export_gif_frame_rate), style = MaterialTheme.typography.labelLarge)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            GifFrameRate.entries.forEach { f ->
+                FilterChip(
+                    selected = settings.gifFrameRate == f,
+                    onClick = { onChange(settings.copy(gifFrameRate = f)) },
+                    label = { Text(stringResource(R.string.fps, f.fps)) },
+                )
+            }
+        }
+    } else if (settings.mode.picture) {
         Text(stringResource(R.string.export_resolution), style = MaterialTheme.typography.labelLarge)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             ExportResolution.entries.forEach { r ->
@@ -418,12 +437,14 @@ private fun exportModeLabel(m: ExportMode) = when (m) {
     ExportMode.VIDEO -> R.string.export_mode_video
     ExportMode.VIDEO_ONLY -> R.string.export_mode_video_only
     ExportMode.AUDIO_ONLY -> R.string.export_mode_audio_only
+    ExportMode.GIF -> R.string.export_mode_gif
 }
 
 private fun exportModeHint(m: ExportMode) = when (m) {
     ExportMode.VIDEO -> R.string.export_mode_video_hint
     ExportMode.VIDEO_ONLY -> R.string.export_mode_video_only_hint
     ExportMode.AUDIO_ONLY -> R.string.export_mode_audio_only_hint
+    ExportMode.GIF -> R.string.export_mode_gif_hint
 }
 
 private fun exportQualityLabel(q: ExportQuality) = when (q) {

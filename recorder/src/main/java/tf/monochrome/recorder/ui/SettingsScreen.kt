@@ -96,6 +96,7 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
                 R.string.settings_storage_text,
                 MediaStoreFile.relativePath(MediaStoreFile.Kind.VIDEO),
                 MediaStoreFile.relativePath(MediaStoreFile.Kind.AUDIO),
+                MediaStoreFile.relativePath(MediaStoreFile.Kind.GIF),
             ),
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.padding(horizontal = 16.dp),

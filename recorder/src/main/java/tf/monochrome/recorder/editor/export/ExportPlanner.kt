@@ -12,24 +12,40 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 
-/** What comes out of an export. The last two are the "separate video and sound" exports. */
-enum class ExportMode {
+/**
+ * What comes out of an export. VIDEO_ONLY and AUDIO_ONLY are the "separate
+ * video and sound" exports.
+ */
+enum class ExportMode(val picture: Boolean, val sound: Boolean) {
     /** Picture and every sound, mixed. */
-    VIDEO,
+    VIDEO(picture = true, sound = true),
     /** Picture only — a silent MP4. */
-    VIDEO_ONLY,
+    VIDEO_ONLY(picture = true, sound = false),
     /** Sound only — the mixed soundtrack as an M4A. */
-    AUDIO_ONLY,
+    AUDIO_ONLY(picture = false, sound = true),
+    /** Picture only, as a looping animated GIF. */
+    GIF(picture = true, sound = false),
 }
 
 enum class ExportResolution(val shortSide: Int?) { ORIGINAL(null), P1080(1080), P720(720), P480(480) }
 
 enum class ExportQuality(val bitsPerPixel: Double) { LOW(0.04), STANDARD(0.07), HIGH(0.12) }
 
+/** A GIF's short side. Never more than the source's: upscaling only makes a GIF bigger. */
+enum class GifSize(val shortSide: Int) { SMALL(320), MEDIUM(480), LARGE(640) }
+
+/**
+ * GIF frame rates. A GIF times its frames in hundredths of a second, and
+ * browsers slow anything under two of those down, so the choices stop at 25.
+ */
+enum class GifFrameRate(val fps: Int) { FPS_10(10), FPS_15(15), FPS_20(20), FPS_25(25) }
+
 data class ExportSettings(
     val mode: ExportMode = ExportMode.VIDEO,
     val resolution: ExportResolution = ExportResolution.ORIGINAL,
     val quality: ExportQuality = ExportQuality.STANDARD,
+    val gifSize: GifSize = GifSize.MEDIUM,
+    val gifFrameRate: GifFrameRate = GifFrameRate.FPS_15,
 )
 
 /** One piece of media in a sequence, already in Media3's terms. */
@@ -101,6 +117,8 @@ data class ExportPlan(
     val durationUs: Long,
     val videoBitrate: Int,
     val audioBitrate: Int,
+    /** Frames per second of the GIF made from the rendered video; null unless [mode] is GIF. */
+    val gifFrameRate: Int? = null,
 ) {
     val hasAudio: Boolean get() = primaryHasAudio || lanes.isNotEmpty()
 }
@@ -124,6 +142,9 @@ sealed interface PlanResult {
  *    its time. Anything past the end of the video is cut off there.
  *  - In an audio-only export the main track keeps its timing too: a clip with
  *    no sound to give becomes a gap of the same length.
+ *  - A GIF is planned as a silent video at the GIF's size, rendered with
+ *    every frame and plenty of bits: it is only the source the GIF's frames
+ *    are taken from, at its own frame rate, by GifTranscoder.
  */
 object ExportPlanner {
     /** Gaps shorter than this are rounding noise and are dropped. */
@@ -142,7 +163,7 @@ object ExportPlanner {
         if (project.clips.isEmpty()) return PlanResult.Nothing(PlanResult.Reason.NO_CLIPS)
         val total = project.durationUs
         val mode = settings.mode
-        val keepClipAudio = mode != ExportMode.VIDEO_ONLY
+        val keepClipAudio = mode.sound
 
         var cursor = 0L
         val primary = project.clips.map { c ->
@@ -191,8 +212,13 @@ object ExportPlanner {
             )
         }
 
+        val gif = mode == ExportMode.GIF
         val first = project.clips.first().source
-        val (w, h) = canvasSize(first.width, first.height, project.canvas, settings.resolution)
+        val (w, h) = if (gif) {
+            canvasSize(first.width, first.height, project.canvas, settings.gifSize.shortSide, upscale = false)
+        } else {
+            canvasSize(first.width, first.height, project.canvas, settings.resolution)
+        }
         val visuals = PlannedVisuals(
             width = w,
             height = h,
@@ -229,8 +255,10 @@ object ExportPlanner {
                 lanes = lanes,
                 visuals = visuals,
                 durationUs = total,
-                videoBitrate = bitrate(w, h, settings.quality, outputFrameRate(project)),
+                // A GIF's source is rendered as well as it can be: the palette is the only loss it should see.
+                videoBitrate = bitrate(w, h, if (gif) ExportQuality.HIGH else settings.quality, outputFrameRate(project)),
                 audioBitrate = AUDIO_BITRATE,
+                gifFrameRate = if (gif) settings.gifFrameRate.fps else null,
             ),
         )
     }
@@ -281,7 +309,14 @@ object ExportPlanner {
      * crop and rotation, takes the chosen aspect (or keeps that one), and
      * sets the short side from the chosen resolution (or keeps the source's).
      */
-    fun canvasSize(sourceW: Int, sourceH: Int, canvas: CanvasSettings, resolution: ExportResolution): Pair<Int, Int> {
+    fun canvasSize(sourceW: Int, sourceH: Int, canvas: CanvasSettings, resolution: ExportResolution): Pair<Int, Int> =
+        canvasSize(sourceW, sourceH, canvas, resolution.shortSide, upscale = true)
+
+    /**
+     * The same, for a short side of [shortSide] pixels (null keeps the
+     * source's). Without [upscale] the short side never exceeds the source's.
+     */
+    fun canvasSize(sourceW: Int, sourceH: Int, canvas: CanvasSettings, shortSide: Int?, upscale: Boolean): Pair<Int, Int> {
         val w0 = if (sourceW > 0) sourceW else 1920
         val h0 = if (sourceH > 0) sourceH else 1080
         val crop = canvas.crop
@@ -290,7 +325,8 @@ object ExportPlanner {
         if (canvas.rotation % 180 != 0) bw = bh.also { bh = bw }
 
         val aspect = canvas.aspect.ratio ?: (bw / bh)
-        val short = resolution.shortSide?.toFloat() ?: min(bw, bh)
+        val sourceShort = min(bw, bh)
+        val short = shortSide?.toFloat()?.let { if (upscale) it else min(it, sourceShort) } ?: sourceShort
         var w = if (aspect >= 1f) short * aspect else short
         var h = if (aspect >= 1f) short else short / aspect
         val long = max(w, h)

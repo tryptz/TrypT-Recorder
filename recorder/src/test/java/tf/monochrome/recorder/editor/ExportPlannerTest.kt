@@ -8,8 +8,11 @@ import org.junit.Test
 import tf.monochrome.recorder.editor.export.ExportMode
 import tf.monochrome.recorder.editor.export.ExportPlan
 import tf.monochrome.recorder.editor.export.ExportPlanner
+import tf.monochrome.recorder.editor.export.ExportQuality
 import tf.monochrome.recorder.editor.export.ExportResolution
 import tf.monochrome.recorder.editor.export.ExportSettings
+import tf.monochrome.recorder.editor.export.GifFrameRate
+import tf.monochrome.recorder.editor.export.GifSize
 import tf.monochrome.recorder.editor.export.PlanResult
 import tf.monochrome.recorder.editor.export.Segment
 import tf.monochrome.recorder.editor.model.AspectPreset
@@ -191,6 +194,51 @@ class ExportPlannerTest {
     fun `exports keep the recorder's 320 kbps audio`() {
         assertEquals(320_000, plan(project(video("a", 10))).audioBitrate)
         assertEquals(320_000, plan(project(video("a", 10)), ExportMode.AUDIO_ONLY).audioBitrate)
+    }
+
+    private fun gif(p: Project, size: GifSize = GifSize.MEDIUM, fps: GifFrameRate = GifFrameRate.FPS_15, quality: ExportQuality = ExportQuality.STANDARD): ExportPlan =
+        (ExportPlanner.plan(p, ExportSettings(mode = ExportMode.GIF, quality = quality, gifSize = size, gifFrameRate = fps)) as PlanResult.Ok).plan
+
+    @Test
+    fun `a gif is a silent picture at the gif's size and frame rate`() {
+        val pl = gif(project(video("a", 10)).addAudio(music("song", 5), 0), fps = GifFrameRate.FPS_20)
+        assertTrue(pl.primaryHasVideo)
+        assertFalse(pl.hasAudio)
+        assertTrue(pl.media.all { it.removeAudio })
+        assertTrue(pl.lanes.isEmpty())
+        assertEquals(480 to 1066, pl.visuals!!.width to pl.visuals!!.height)
+        assertEquals(20, pl.gifFrameRate)
+        assertEquals(10 * SEC, pl.durationUs)
+    }
+
+    @Test
+    fun `a gif keeps the canvas edits`() {
+        val p = project(video("a", 10)).copy(canvas = CanvasSettings(aspect = AspectPreset.SQUARE))
+        val v = gif(p, GifSize.SMALL).visuals!!
+        assertEquals(320 to 320, v.width to v.height)
+    }
+
+    @Test
+    fun `a gif is never bigger than its source`() {
+        val small = project(video("a", 10, w = 360, h = 640))
+        val v = gif(small, GifSize.LARGE).visuals!!
+        assertEquals(360 to 640, v.width to v.height)
+    }
+
+    @Test
+    fun `a gif's source video is rendered at high quality whatever the setting`() {
+        val p = project(video("a", 10).copy(frameRate = 60f))
+        val pl = gif(p, quality = ExportQuality.LOW)
+        val v = pl.visuals!!
+        assertEquals(ExportPlanner.bitrate(v.width, v.height, ExportQuality.HIGH, 60f), pl.videoBitrate)
+    }
+
+    @Test
+    fun `only gif exports carry a gif frame rate`() {
+        val p = project(video("a", 10))
+        for (mode in ExportMode.entries.filter { it != ExportMode.GIF }) {
+            assertNull("$mode", (ExportPlanner.plan(p, ExportSettings(mode = mode)) as PlanResult.Ok).plan.gifFrameRate)
+        }
     }
 
     @Test
