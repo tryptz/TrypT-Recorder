@@ -1,0 +1,44 @@
+# Only what :recorder uses. Toolchain versions match Tryptify's, where this app
+# was first developed: AGP 9.0.0, Kotlin 2.1.0, Gradle 9.1.0.
+[versions]
+agp = "9.0.0"
+kotlin = "2.1.0"
+composeBom = "2025.07.00"
+lifecycle = "2.8.7"
+coroutines = "1.9.0"
+serialization = "1.7.3"
+junit = "4.13.2"
+# Media3 for editing: Transformer, CompositionPlayer, effects. 1.10.1, not
+# 1.11.x: 1.11 pulls kotlin-stdlib 2.2.10, newer than the Kotlin 2.1.0 compiler
+# above can read. Upgrade the two together.
+media3Editor = "1.10.1"
+
+[libraries]
+compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
+compose-ui = { group = "androidx.compose.ui", name = "ui" }
+compose-ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics" }
+compose-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
+compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
+compose-material3 = { group = "androidx.compose.material3", name = "material3" }
+compose-material-icons = { group = "androidx.compose.material", name = "material-icons-extended" }
+compose-activity = { group = "androidx.activity", name = "activity-compose", version = "1.9.3" }
+
+lifecycle-runtime = { group = "androidx.lifecycle", name = "lifecycle-runtime-compose", version.ref = "lifecycle" }
+lifecycle-viewmodel = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-compose", version.ref = "lifecycle" }
+
+core-ktx = { group = "androidx.core", name = "core-ktx", version = "1.15.0" }
+kotlinx-coroutines = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
+kotlinx-serialization = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serialization" }
+
+media3-editor-transformer = { group = "androidx.media3", name = "media3-transformer", version.ref = "media3Editor" }
+media3-editor-effect = { group = "androidx.media3", name = "media3-effect", version.ref = "media3Editor" }
+media3-editor-common = { group = "androidx.media3", name = "media3-common", version.ref = "media3Editor" }
+media3-editor-exoplayer = { group = "androidx.media3", name = "media3-exoplayer", version.ref = "media3Editor" }
+
+junit = { group = "junit", name = "junit", version.ref = "junit" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }

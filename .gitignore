@@ -1,0 +1,33 @@
+# Build output
+build/
+.gradle/
+.kotlin/
+.externalNativeBuild/
+.cxx/
+captures/
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+*.log
+
+# Machine-local
+local.properties
+.idea/
+*.iml
+.vscode/
+.DS_Store
+
+# Signing. The release key and its passwords are never committed.
+*.jks
+*.keystore
+keystore.properties
+# Exception: the debug key is committed on purpose (standard, public
+# android/androiddebugkey values) so every machine's debug APK installs over
+# every other's.
+!recorder/debug.keystore
+
+# Machine-local agent settings
+CLAUDE.md
+.claude/settings.local.json
