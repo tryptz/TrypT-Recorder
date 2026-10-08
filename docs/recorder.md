@@ -9,7 +9,7 @@ repository; this repository is its standalone home.
 ## Build and test
 
 ```
-./gradlew :recorder:testDebugUnitTest    # 137 JVM tests, no device
+./gradlew :recorder:testDebugUnitTest    # 149 JVM tests, no device
 ./gradlew :recorder:lintDebug            # clean: 0 errors, 0 warnings
 ./gradlew :recorder:assembleDebug        # signed with the committed recorder/debug.keystore
 ./gradlew :recorder:assembleRelease      # R8-minified, ~4 MB
@@ -105,9 +105,12 @@ the rate while moving (`FrameTiming`) beside the file's average.
   flip.
 - Look: filters (mono, sepia, vivid, cool, warm, invert), brightness, contrast,
   saturation, fade in from / out to black.
-- **Film grain**: amount and size (fine to coarse) — luminance-only Gaussian
-  grain, strongest in the midtones, fresh every frame, the same in preview
-  and export.
+- **Film grain**: presets (Fine, 35 mm, 16 mm, Super 8, Mono), then amount;
+  character (size, sharpness, texture); tone (how much shows in shadows,
+  midtones and highlights); colour (monochrome to per-channel grain, and
+  red, green and blue strength); motion (every frame, 24 or 12 fps, still);
+  and *Show grain only* to judge it on grey in the preview. The same in
+  preview and export.
 - Undo/redo (a slider drag is one step), drafts autosaved as JSON.
 - Export resolution (original, 1080p, 720p, 480p) and quality.
 
@@ -195,10 +198,20 @@ The rule that keeps it testable without a phone: decisions live in pure Kotlin
   stays under the finger when it comes back; each drag is one undo step.
 - **Film grain is a shader of its own** (`FilmGrain`, a Media3 `GlEffect`),
   since Media3 has none. What makes it look like film rather than noise:
-  luminance only, so no colour speckle; close to Gaussian (four hashes
-  summed); strongest in the midtones and a fifth as strong at black and white
-  (`Grain.response`); two layers, the finer one at half size, for clumps
-  with texture. The noise grid is read with smooth interpolation and rescaled
+  luminance only by default, so no colour speckle; close to Gaussian (four
+  hashes summed); strongest in the midtones and a fifth as strong at black
+  and white (`Grain.response`); two layers, the finer one at half size, for
+  clumps with texture. The detail controls (`GrainDetail`, `GrainPreset`)
+  default to exactly that first grain — checked pixel for pixel against the
+  1.4.0 shader on Mesa — so older drafts look the same. Tone is the same
+  quarter-circle curve through three points (black, grey, white). Colour
+  blends a field per channel into the shared one, scaled to keep its
+  strength. **Sharpness** raises each noise value to a power below 1
+  (keeping its sign, normalised by the exact E|n|^2p so strength holds):
+  edges between light and dark grains steepen while grains stay round.
+  Sharpening the grid's interpolation was tried first and turned coarse
+  grains into squares. Motion seeds from the time rounded to 1/24 or 1/12 s,
+  or from nothing. The texture and colour layers cost nothing at zero. The noise grid is read with smooth interpolation and rescaled
   to the same strength everywhere, because plain interpolation is weaker
   between grid points and shows as a mesh. The hash avoids `sin`, which loses
   precision on mobile GPUs. Grain is added to gamma-encoded values: that is
@@ -280,6 +293,9 @@ emulator, so none of it has run on a phone. Before a release, check at least:
 - [ ] Titles and fades appear at the same times in preview and export.
 - [ ] Film grain: fine and natural at 1:1 on the phone, the same in preview
       and export, moving every frame; no mesh or banding at coarse size.
+      Each preset and control changes the preview; *Show grain only* never
+      reaches an export; 24 fps motion holds the grain across frames of a
+      60 fps recording; a long 1080p export with colour grain still runs.
 - [ ] Crop tool: the box sits exactly over the picture; corners, edges and
       the inside each grab and follow the finger; a held shape stays held;
       the export matches the box — also after Rotate and Flip.

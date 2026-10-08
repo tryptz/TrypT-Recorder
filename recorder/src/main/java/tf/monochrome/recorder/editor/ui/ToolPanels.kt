@@ -25,12 +25,14 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import tf.monochrome.recorder.R
 import tf.monochrome.recorder.capture.formatDuration
 import tf.monochrome.recorder.editor.export.ExportMode
@@ -40,11 +42,15 @@ import tf.monochrome.recorder.editor.export.ExportResolution
 import tf.monochrome.recorder.editor.export.ExportSettings
 import tf.monochrome.recorder.editor.export.GifFrameRate
 import tf.monochrome.recorder.editor.export.GifSize
+import tf.monochrome.recorder.editor.export.Grain
 import tf.monochrome.recorder.editor.model.AspectPreset
 import tf.monochrome.recorder.editor.model.AudioClip
 import tf.monochrome.recorder.editor.model.CropBox
 import tf.monochrome.recorder.editor.model.CropInsets
 import tf.monochrome.recorder.editor.model.Filter
+import tf.monochrome.recorder.editor.model.GrainDetail
+import tf.monochrome.recorder.editor.model.GrainMotion
+import tf.monochrome.recorder.editor.model.GrainPreset
 import tf.monochrome.recorder.editor.model.MAX_VOLUME
 import tf.monochrome.recorder.editor.model.Project
 import tf.monochrome.recorder.editor.model.SPEEDS
@@ -437,29 +443,97 @@ private fun AdjustSlider(label: String, value: Float, onDone: () -> Unit, onChan
     }
 }
 
-/** Film grain over the whole picture; see Grain for what it does. */
+/** Film grain over the whole picture; see Grain for what each control does. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun GrainPanel(vm: EditorViewModel, project: Project) {
     val l = project.look
+    val d = l.grainDetail
+    val solo by vm.grainSolo.collectAsStateWithLifecycle()
+    fun detail(change: (GrainDetail) -> GrainDetail) = vm.preview { it.copy(look = it.look.copy(grainDetail = change(it.look.grainDetail))) }
+    fun pct(v: Float) = "${(v * 100).roundToInt()}%"
+
     Text(stringResource(R.string.grain_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    Labeled(stringResource(R.string.grain_amount), if (l.grain <= 0f) stringResource(R.string.grain_off) else "${(l.grain * 100).roundToInt()}%") {
-        Slider(
-            value = l.grain,
-            onValueChange = { v -> vm.preview { it.copy(look = it.look.copy(grain = v)) } },
-            onValueChangeFinished = vm::commit,
-        )
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        GrainPreset.entries.forEach { p ->
+            FilterChip(
+                selected = p.matches(l),
+                onClick = { vm.edit { it.copy(look = p.applyTo(it.look)) } },
+                label = { Text(stringResource(grainPresetLabel(p))) },
+            )
+        }
     }
-    Labeled(stringResource(R.string.grain_size), stringResource(grainSizeLabel(l.grainSize))) {
-        Slider(
-            value = l.grainSize,
-            onValueChange = { v -> vm.preview { it.copy(look = it.look.copy(grainSize = v)) } },
-            onValueChangeFinished = vm::commit,
-        )
+    GrainSlider(stringResource(R.string.grain_amount), l.grain, if (l.grain <= 0f) stringResource(R.string.grain_off) else pct(l.grain), vm::commit) { v ->
+        vm.preview { it.copy(look = it.look.copy(grain = v)) }
     }
-    if (l.grain > 0f || l.grainSize != VideoLook.DEFAULT_GRAIN_SIZE) {
-        TextButton(onClick = { vm.edit { it.copy(look = it.look.copy(grain = 0f, grainSize = VideoLook.DEFAULT_GRAIN_SIZE)) } }) {
+
+    GrainSection(R.string.grain_character)
+    GrainSlider(stringResource(R.string.grain_size), l.grainSize, stringResource(grainSizeLabel(l.grainSize)), vm::commit) { v ->
+        vm.preview { it.copy(look = it.look.copy(grainSize = v)) }
+    }
+    GrainSlider(stringResource(R.string.grain_sharpness), d.sharpness, pct(d.sharpness), vm::commit) { v -> detail { it.copy(sharpness = v) } }
+    GrainSlider(stringResource(R.string.grain_texture), d.texture, pct(d.texture), vm::commit) { v -> detail { it.copy(texture = v) } }
+
+    GrainSection(R.string.grain_tone)
+    GrainSlider(stringResource(R.string.grain_shadows), d.shadows, pct(d.shadows), vm::commit) { v -> detail { it.copy(shadows = v) } }
+    GrainSlider(stringResource(R.string.grain_midtones), d.midtones, pct(d.midtones), vm::commit) { v -> detail { it.copy(midtones = v) } }
+    GrainSlider(stringResource(R.string.grain_highlights), d.highlights, pct(d.highlights), vm::commit) { v -> detail { it.copy(highlights = v) } }
+
+    GrainSection(R.string.grain_colour_section)
+    GrainSlider(stringResource(R.string.grain_colour), d.colour, if (d.colour <= 0f) stringResource(R.string.grain_mono) else pct(d.colour), vm::commit) { v ->
+        detail { it.copy(colour = v) }
+    }
+    val channels = 0f..Grain.MAX_CHANNEL
+    GrainSlider(stringResource(R.string.grain_red), d.red, "×%.2f".format(d.red), vm::commit, channels) { v -> detail { it.copy(red = v) } }
+    GrainSlider(stringResource(R.string.grain_green), d.green, "×%.2f".format(d.green), vm::commit, channels) { v -> detail { it.copy(green = v) } }
+    GrainSlider(stringResource(R.string.grain_blue), d.blue, "×%.2f".format(d.blue), vm::commit, channels) { v -> detail { it.copy(blue = v) } }
+
+    GrainSection(R.string.grain_motion)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        GrainMotion.entries.forEach { m ->
+            FilterChip(
+                selected = d.motion == m,
+                onClick = { vm.edit { it.copy(look = it.look.copy(grainDetail = it.look.grainDetail.copy(motion = m))) } },
+                label = { Text(grainMotionLabel(m)) },
+            )
+        }
+    }
+
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(stringResource(R.string.grain_solo), style = MaterialTheme.typography.labelLarge)
+            Text(stringResource(R.string.grain_solo_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(checked = solo, onCheckedChange = vm::setGrainSolo, enabled = l.grain > 0f)
+    }
+    if (l.grain > 0f || l.grainSize != VideoLook.DEFAULT_GRAIN_SIZE || d != GrainDetail()) {
+        TextButton(onClick = { vm.edit { it.copy(look = it.look.copy(grain = 0f, grainSize = VideoLook.DEFAULT_GRAIN_SIZE, grainDetail = GrainDetail())) } }) {
             Text(stringResource(R.string.reset))
         }
+    }
+}
+
+@Composable
+private fun GrainSection(title: Int) {
+    Text(stringResource(title), style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
+}
+
+@Composable
+private fun GrainSlider(
+    label: String,
+    value: Float,
+    shown: String,
+    onDone: () -> Unit,
+    range: ClosedFloatingPointRange<Float> = 0f..1f,
+    onChange: (Float) -> Unit,
+) {
+    Labeled(label, shown) {
+        Slider(value = value.coerceIn(range), onValueChange = onChange, onValueChangeFinished = onDone, valueRange = range)
     }
 }
 
@@ -467,6 +541,21 @@ private fun grainSizeLabel(size: Float) = when {
     size < 1f / 3 -> R.string.grain_fine
     size < 2f / 3 -> R.string.grain_medium
     else -> R.string.grain_coarse
+}
+
+private fun grainPresetLabel(p: GrainPreset) = when (p) {
+    GrainPreset.FINE -> R.string.grain_fine
+    GrainPreset.MM35 -> R.string.grain_preset_35
+    GrainPreset.MM16 -> R.string.grain_preset_16
+    GrainPreset.SUPER8 -> R.string.grain_preset_super8
+    GrainPreset.MONO -> R.string.grain_mono
+}
+
+@Composable
+private fun grainMotionLabel(m: GrainMotion): String = when (m) {
+    GrainMotion.EVERY_FRAME -> stringResource(R.string.grain_motion_every)
+    GrainMotion.STILL -> stringResource(R.string.grain_motion_still)
+    GrainMotion.FILM_24, GrainMotion.FILM_12 -> stringResource(R.string.fps, m.fps ?: 0)
 }
 
 @Composable

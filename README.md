@@ -33,8 +33,10 @@ Android 10 or newer.
   one-tap *Extract audio* in the library.
 - **Crop by touch**: drag the corners, edges or the whole box on the picture,
   any size and shape, or held to 1:1, 4:5, 9:16, 16:9, 4:3 or 3:4.
-- **Film grain**: fine, luminance-only grain, strongest in the midtones and
-  fresh every frame, from fine to coarse.
+- **Film grain** with professional controls: film-format presets, amount,
+  size, sharpness, texture, shadow/midtone/highlight response, colour grain
+  and per-channel strength, grain motion (every frame, 24/12 fps, still), and
+  a grain-only view.
 - Music tracks, titles, aspect ratio, rotate, flip, filters, brightness,
   contrast, saturation, fades. Undo/redo; drafts save themselves.
 - The preview plays exactly what the export will render.

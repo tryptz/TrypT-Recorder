@@ -115,12 +115,49 @@ data class VideoLook(
     val grain: Float = 0f,
     /** 0 = finest .. 1 = coarsest grain. */
     val grainSize: Float = DEFAULT_GRAIN_SIZE,
+    /** The rest of the grain's character. */
+    val grainDetail: GrainDetail = GrainDetail(),
 ) {
     companion object {
         /** "Fine": grains of about 1.5 px on a 1080-pixel short side. */
         const val DEFAULT_GRAIN_SIZE = 0.15f
     }
 }
+
+/** How often the grain's pattern changes. */
+enum class GrainMotion(val fps: Int?) {
+    /** A new pattern every video frame. */
+    EVERY_FRAME(null),
+    /** New 24 times a second, as on cinema film, whatever the video's own rate. */
+    FILM_24(24),
+    FILM_12(12),
+    /** One pattern throughout, like dust on a lens. */
+    STILL(0),
+}
+
+/**
+ * Film grain's finer controls. Amount and size came first and stay in
+ * [VideoLook] as `grain` and `grainSize`, so drafts from before keep their
+ * grain. The defaults reproduce that first grain exactly.
+ */
+@Serializable
+data class GrainDetail(
+    /** 0 = soft-edged grains .. 1 = crisp, well-defined ones. */
+    val sharpness: Float = 0f,
+    /** A second layer of half-size grain: 0 = smooth clumps .. 1 = gritty. */
+    val texture: Float = 0.5f,
+    /** 0 = monochrome .. 1 = every colour channel its own grain. */
+    val colour: Float = 0f,
+    /** How strongly grain shows in shadows, midtones and highlights, 0..1. */
+    val shadows: Float = 0.2f,
+    val midtones: Float = 1f,
+    val highlights: Float = 0.2f,
+    /** Grain strength per channel, 0..2. In film the blue layer is usually the grainiest. */
+    val red: Float = 1f,
+    val green: Float = 1f,
+    val blue: Float = 1f,
+    val motion: GrainMotion = GrainMotion.EVERY_FRAME,
+)
 
 enum class AspectPreset(val ratio: Float?) {
     ORIGINAL(null),

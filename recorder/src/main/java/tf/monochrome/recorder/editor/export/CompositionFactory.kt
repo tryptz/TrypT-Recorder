@@ -130,7 +130,7 @@ object CompositionFactory {
         if (v.brightness != 0f) out += Brightness((v.brightness * 0.5f).coerceIn(-1f, 1f))
         if (v.contrast != 0f) out += Contrast((v.contrast * 0.6f).coerceIn(-1f, 1f))
         if (v.saturation != 0f) out += HslAdjustment.Builder().adjustSaturation((v.saturation * 100f).coerceIn(-100f, 100f)).build()
-        if (v.grain > 0f) out += FilmGrain(v.grain, v.grainSize)
+        v.grain?.let { out += FilmGrain(it) }
         if (v.fadeInUs > 0 || v.fadeOutUs > 0) out += FadeToBlack(v.fadeInUs, v.fadeOutUs, v.totalUs)
         if (v.texts.isNotEmpty()) out += OverlayEffect(v.texts.map { TimedText(it) })
         return out

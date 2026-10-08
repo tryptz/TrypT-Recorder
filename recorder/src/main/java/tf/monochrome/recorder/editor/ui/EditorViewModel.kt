@@ -89,6 +89,10 @@ class EditorViewModel(app: Application, private val projectId: String) : Android
     /** While the crop tool is open the preview shows the whole picture, for the crop box to sit over. */
     private var cropEditing = false
 
+    private val _grainSolo = MutableStateFlow(false)
+    /** The preview shows the grain alone, on mid grey. Never exported. */
+    val grainSolo: StateFlow<Boolean> = _grainSolo.asStateFlow()
+
     // No reference to the SurfaceView is kept: a view model outlives its views.
     private var player: CompositionPlayer? = null
     private var lastPlan: ExportPlan? = null
@@ -269,12 +273,20 @@ class EditorViewModel(app: Application, private val projectId: String) : Android
         schedulePreview(immediate = true)
     }
 
+    fun setGrainSolo(on: Boolean) {
+        if (_grainSolo.value == on) return
+        _grainSolo.value = on
+        schedulePreview(immediate = true)
+    }
+
     private fun rebuildPreview() {
         val p = project?.let {
             if (cropEditing) it.copy(canvas = it.canvas.copy(crop = CropInsets(), aspect = AspectPreset.ORIGINAL, fill = false)) else it
         } ?: return
         val result = ExportPlanner.plan(p, PREVIEW_SETTINGS)
-        val plan = (result as? PlanResult.Ok)?.plan
+        val plan = (result as? PlanResult.Ok)?.plan?.let { pl ->
+            if (!_grainSolo.value) pl else pl.copy(visuals = pl.visuals?.let { v -> v.copy(grain = v.grain?.copy(solo = true)) })
+        }
         plan?.visuals?.let { _aspect.value = it.width.toFloat() / it.height }
         val pl = player ?: return
         if (plan == lastPlan) return

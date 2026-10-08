@@ -148,7 +148,10 @@ fun EditorScreen(projectId: String, onClose: () -> Unit) {
     }
 
     LaunchedEffect(selection) { if (!tool.fits(selection)) tool = Tool.NONE }
-    LaunchedEffect(tool) { vm.setCropEditing(tool == Tool.CROP) }
+    LaunchedEffect(tool) {
+        vm.setCropEditing(tool == Tool.CROP)
+        if (tool != Tool.GRAIN) vm.setGrainSolo(false)
+    }
     LaunchedEffect(message) {
         message?.let {
             snackbar.showSnackbar(it)

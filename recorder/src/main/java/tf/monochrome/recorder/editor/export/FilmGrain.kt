@@ -16,18 +16,17 @@ import androidx.media3.effect.GlShaderProgram
 import kotlin.math.min
 
 /**
- * Film grain over the whole picture: [amount] 0..1, [size] 0 (fine) .. 1
- * (coarse). See [Grain] for the rules and [GRAIN_FRAGMENT_SHADER] for how
- * it is drawn.
+ * Film grain over the whole picture. See [Grain] for the rules and
+ * [GRAIN_FRAGMENT_SHADER] for how it is drawn.
  */
-class FilmGrain(private val amount: Float, private val size: Float) : GlEffect {
+class FilmGrain(private val grain: PlannedGrain) : GlEffect {
     override fun toGlShaderProgram(context: Context, useHdr: Boolean): GlShaderProgram =
-        FilmGrainShaderProgram(useHdr, amount, size)
+        FilmGrainShaderProgram(useHdr, grain)
 
-    override fun isNoOp(inputWidth: Int, inputHeight: Int): Boolean = amount <= 0f
+    override fun isNoOp(inputWidth: Int, inputHeight: Int): Boolean = grain.amount <= 0f
 }
 
-private class FilmGrainShaderProgram(useHdr: Boolean, private val amount: Float, private val size: Float) :
+private class FilmGrainShaderProgram(useHdr: Boolean, private val grain: PlannedGrain) :
     BaseGlShaderProgram(/* useHighPrecisionColorComponents= */ useHdr, /* texturePoolCapacity= */ 1) {
 
     private val program: GlProgram = try {
@@ -47,18 +46,26 @@ private class FilmGrainShaderProgram(useHdr: Boolean, private val amount: Float,
         val identity = GlUtil.create4x4IdentityMatrix()
         program.setFloatsUniform("uTransformationMatrix", identity)
         program.setFloatsUniform("uTexTransformationMatrix", identity)
+        val power = Grain.sharpPower(grain.sharpness)
+        program.setFloatUniform("uSharpPower", power)
+        program.setFloatUniform("uSharpNorm", Grain.sharpNorm(power))
+        program.setFloatUniform("uTexture", grain.texture)
+        program.setFloatUniform("uColour", grain.colour)
+        program.setFloatsUniform("uChannels", floatArrayOf(grain.red, grain.green, grain.blue))
+        program.setFloatsUniform("uResponse", floatArrayOf(grain.shadows, grain.midtones, grain.highlights))
+        program.setFloatUniform("uSolo", if (grain.solo) 1f else 0f)
     }
 
     override fun configure(inputWidth: Int, inputHeight: Int): Size {
         val shortSide = min(inputWidth, inputHeight)
-        cell = Grain.cellPixels(size, shortSide)
-        std = Grain.pixelStd(amount, size, shortSide)
+        cell = Grain.cellPixels(grain.size, shortSide)
+        std = Grain.pixelStd(grain.amount, grain.size, shortSide)
         return Size(inputWidth, inputHeight)
     }
 
     override fun drawFrame(inputTexId: Int, presentationTimeUs: Long) {
         try {
-            val (sx, sy) = Grain.seed(presentationTimeUs)
+            val (sx, sy) = Grain.seed(presentationTimeUs, grain.motion)
             program.use()
             program.setSamplerTexIdUniform("uTexSampler", inputTexId, /* texUnitIndex= */ 0)
             program.setFloatUniform("uStd", std)
@@ -95,12 +102,18 @@ void main() {
 """
 
 /**
- * Gaussian luminance grain. Noise is laid on a grid of [Grain.cellPixels]
- * cells shifted by a fresh [Grain.seed] each frame, read with smooth
- * interpolation and rescaled so its strength is even across each cell (plain
- * interpolation is weaker between cell centres, which shows as a mesh); a
- * second, twice-as-fine layer gives the clumps some texture. The same value
- * goes on red, green and blue, weighted by [Grain.response].
+ * Gaussian film grain. Noise is laid on a grid of [Grain.cellPixels] cells
+ * shifted by a fresh [Grain.seed] each frame, read with smooth interpolation
+ * and rescaled so its strength is even across each cell (interpolation is
+ * weaker between cell centres, which shows as a mesh). `uTexture` mixes in a
+ * second, half-size layer for grit; `uSharpPower` and `uSharpNorm` crisp the
+ * grains' edges without changing their strength ([Grain.sharpPower]).
+ *
+ * One grain field goes on all three channels; `uColour` blends in a field of
+ * each channel's own, keeping the strength, and `uChannels` scales each.
+ * `uResponse` (shadows, midtones, highlights) weights it by brightness as
+ * [Grain.response] does. With `uSolo` the picture is replaced by mid grey.
+ * The texture and colour layers cost nothing when set to zero.
  *
  * The hash is Dave Hoskins' "hash without sine": sin-based hashes lose
  * precision on mobile GPUs and turn into visible patterns.
@@ -115,6 +128,13 @@ uniform sampler2D uTexSampler;
 uniform float uStd;
 uniform float uCell;
 uniform vec2 uSeed;
+uniform float uSharpPower;
+uniform float uSharpNorm;
+uniform float uTexture;
+uniform float uColour;
+uniform vec3 uChannels;
+uniform vec3 uResponse;
+uniform float uSolo;
 varying vec2 vTexSamplingCoord;
 
 float hash(vec2 p) {
@@ -142,16 +162,46 @@ float layer(vec2 px, float cellSize, vec2 seed) {
   return n * inversesqrt(v.x * v.y);
 }
 
+// One grain field, standard deviation 1.
+float field(vec2 px, vec2 seed) {
+  float n = layer(px, uCell, seed);
+  if (uTexture > 0.0) {
+    n = (n + uTexture * layer(px, uCell * 0.5, seed.yx + 0.37)) * inversesqrt(1.0 + uTexture * uTexture);
+  }
+  if (uSharpPower < 1.0) {
+    n = sign(n) * pow(abs(n), uSharpPower) * uSharpNorm;
+  }
+  return n;
+}
+
+float arc(float t) {
+  return sqrt(clamp(t * (2.0 - t), 0.0, 1.0));
+}
+
 void main() {
   vec4 src = texture2D(uTexSampler, vTexSamplingCoord);
   vec3 c = src.rgb;
 #ifdef LINEAR_INPUT
   c = pow(max(c, 0.0), vec3(1.0 / 2.4));
 #endif
+  if (uSolo > 0.5) {
+    c = vec3(0.5);
+  }
   float luma = dot(clamp(c, 0.0, 1.0), vec3(0.2126, 0.7152, 0.0722));
-  float response = 0.2 + 0.8 * sqrt(clamp(4.0 * luma * (1.0 - luma), 0.0, 1.0));
-  float n = (layer(gl_FragCoord.xy, uCell, uSeed) + 0.5 * layer(gl_FragCoord.xy, uCell * 0.5, uSeed.yx + 0.37)) * 0.8944272;
-  c += n * uStd * response;
+  float response = luma < 0.5
+      ? mix(uResponse.x, uResponse.y, arc(2.0 * luma))
+      : mix(uResponse.z, uResponse.y, arc(2.0 - 2.0 * luma));
+  float mono = field(gl_FragCoord.xy, uSeed);
+  vec3 n = vec3(mono);
+  if (uColour > 0.0) {
+    vec3 own = vec3(
+        field(gl_FragCoord.xy, uSeed + vec2(101.3, 47.9)),
+        field(gl_FragCoord.xy, uSeed + vec2(13.7, 211.1)),
+        field(gl_FragCoord.xy, uSeed + vec2(307.9, 157.3)));
+    float k = 1.0 - uColour;
+    n = (n * k + own * uColour) * inversesqrt(k * k + uColour * uColour);
+  }
+  c += n * uChannels * (uStd * response);
 #ifdef LINEAR_INPUT
   c = pow(max(c, 0.0), vec3(2.4));
 #else

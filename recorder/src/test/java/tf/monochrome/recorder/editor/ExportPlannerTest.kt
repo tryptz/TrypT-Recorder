@@ -162,13 +162,14 @@ class ExportPlannerTest {
 
     @Test
     fun `grain reaches the picture, held to its range`() {
-        assertEquals(0f, plan(project(video("a", 10))).visuals!!.grain)
+        assertNull(plan(project(video("a", 10))).visuals!!.grain)
         val p = project(video("a", 10)).copy(look = VideoLook(grain = 1.5f, grainSize = -0.2f))
-        val v = plan(p).visuals!!
-        assertEquals(1f, v.grain)
-        assertEquals(0f, v.grainSize)
+        val g = plan(p).visuals!!.grain!!
+        assertEquals(1f, g.amount)
+        assertEquals(0f, g.size)
+        assertFalse("never exported as grain-only", g.solo)
         // Silent video and GIF carry it too.
-        assertEquals(1f, plan(p, ExportMode.GIF).visuals!!.grain)
+        assertEquals(1f, plan(p, ExportMode.GIF).visuals!!.grain!!.amount)
     }
 
     @Test

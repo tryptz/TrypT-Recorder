@@ -3,6 +3,8 @@ package tf.monochrome.recorder.editor
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import tf.monochrome.recorder.editor.model.Filter
+import tf.monochrome.recorder.editor.model.GrainDetail
+import tf.monochrome.recorder.editor.model.GrainMotion
 import tf.monochrome.recorder.editor.model.Project
 import tf.monochrome.recorder.editor.model.TextPosition
 import tf.monochrome.recorder.editor.model.VideoLook
@@ -30,6 +32,24 @@ class ProjectJsonTest {
         assertEquals(0f, look.grain)
         assertEquals(VideoLook.DEFAULT_GRAIN_SIZE, look.grainSize)
         assertEquals(0.1f, look.brightness)
+    }
+
+    @Test
+    fun `drafts with the first grain keep it, with the detail at its defaults`() {
+        // As 1.4.0 saved it: amount and size, nothing more.
+        val json = """{"id":"x","name":"n","createdAt":1,"updatedAt":2,"look":{"grain":0.4,"grainSize":0.6}}"""
+        val look = ProjectStore.JSON.decodeFromString(Project.serializer(), json).look
+        assertEquals(0.4f, look.grain)
+        assertEquals(0.6f, look.grainSize)
+        assertEquals(GrainDetail(), look.grainDetail)
+    }
+
+    @Test
+    fun `grain detail survives a round trip`() {
+        val detail = GrainDetail(sharpness = 0.3f, texture = 0.9f, colour = 0.4f, shadows = 0.6f, midtones = 0.8f, highlights = 0.1f, red = 0.5f, green = 1.5f, blue = 2f, motion = GrainMotion.FILM_24)
+        val p = project(video("a", 10)).let { it.copy(look = it.look.copy(grain = 0.5f, grainDetail = detail)) }
+        val back = ProjectStore.JSON.decodeFromString(Project.serializer(), ProjectStore.JSON.encodeToString(Project.serializer(), p))
+        assertEquals(detail, back.look.grainDetail)
     }
 
     @Test
