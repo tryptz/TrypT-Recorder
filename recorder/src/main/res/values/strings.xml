@@ -90,6 +90,10 @@
     <string name="settings_storage">Storage</string>
     <string name="settings_storage_text">Videos are saved to %1$s, extracted audio to %2$s, GIFs to %3$s.</string>
     <string name="settings_about">About</string>
+    <string name="settings_crash">Last crash</string>
+    <string name="settings_crash_hint">The app closed unexpectedly last time. Share this report with whoever is fixing it; it stays on this phone until you do.</string>
+    <string name="settings_crash_share">Share report</string>
+    <string name="settings_crash_clear">Clear</string>
     <string name="settings_about_text">Tryptify Recorder grew out of the debug screen recorder in Tryptify: native-quality capture with the device’s own audio recorded digitally, now with a floating button and a video editor.</string>
     <string name="resolution_native">Native (screen)</string>
     <string name="resolution_1440">1440p</string>

@@ -135,7 +135,7 @@ fun Project.trimOverlay(id: String, startUs: Long, endUs: Long): Project {
     val clip = overlays.firstOrNull { it.id == id } ?: return this
     val next = overlays.firstOrNull { it.layer == clip.layer && it.startUs > clip.startUs }?.startUs ?: durationUs
     val maxLength = minOf(next, durationUs) - clip.startUs
-    if (maxLength < MIN_CLIP_US) return this
+    if (maxLength < MIN_CLIP_US || clip.source.durationUs < MIN_CLIP_US) return this
     val start = startUs.coerceIn(0, clip.source.durationUs - MIN_CLIP_US)
     val end = endUs.coerceIn(start + MIN_CLIP_US, minOf(clip.source.durationUs, start + maxLength))
     return updateOverlay(id) { it.copy(trimStartUs = start, trimEndUs = end) }

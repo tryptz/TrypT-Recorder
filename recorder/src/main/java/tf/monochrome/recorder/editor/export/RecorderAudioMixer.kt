@@ -130,6 +130,11 @@ internal class RecorderAudioMixerFactory(
 
         override fun configure(outputAudioFormat: AudioFormat, bufferSizeMs: Int, startTimeUs: Long) {
             if (outputAudioFormat.channelCount != packedChannels || outputAudioFormat.sampleRate != MIX_SAMPLE_RATE) {
+                // Not the routed format: pass straight through, never through a native mixer
+                // left over from an earlier configuration.
+                if (handle != 0L) NativeRecorderMixer.destroy(handle)
+                handle = 0L
+                previous = null
                 mixer.configure(outputAudioFormat, bufferSizeMs, startTimeUs)
                 return
             }
@@ -138,6 +143,11 @@ internal class RecorderAudioMixerFactory(
                 bufferSizeMs,
                 startTimeUs,
             )
+            // Configured again without a reset: start from a fresh native mixer,
+            // and forget what the old one had, or settings would be applied as
+            // changes to effects the new one never got.
+            if (handle != 0L) NativeRecorderMixer.destroy(handle)
+            previous = null
             handle = NativeRecorderMixer.create(outputAudioFormat.sampleRate)
         }
 

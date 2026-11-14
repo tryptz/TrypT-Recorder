@@ -9,7 +9,7 @@ repository; this repository is its standalone home.
 ## Build and test
 
 ```
-./gradlew :recorder:testDebugUnitTest    # 179 JVM tests, no device
+./gradlew :recorder:testDebugUnitTest    # 181 JVM tests, no device
 ./gradlew :recorder:lintDebug            # clean: 0 errors, 0 warnings
 ./gradlew :recorder:assembleDebug        # signed with the committed recorder/debug.keystore
 ./gradlew :recorder:assembleRelease      # R8-minified, ~10 MB
@@ -343,6 +343,30 @@ upstream snap-in factory directly because the original player's engine feeds one
 shared stereo input to every bus. Effects run within the project duration.
 Preview seeks start each chain with fresh effect state.
 
+Fixes made here to the vendored DSP (each reproduced on the host first, then
+re-run after the fix; an AddressSanitizer + UBSan fuzz of all 36 snap-ins is
+clean):
+
+- **Resonator** fed its comb output back *plus* a low-passed copy of it, a
+  loop gain of about 1.4 at the default settings: full-scale noise within a
+  second, then NaN. The feedback is now a blend of the two, never above 1.
+- **Shaper (Mirror) and Nonlinear Filter (fold)** folded with a loop that took
+  |x|/2 steps per sample and never ended for infinite input — the audio
+  thread hung and the export never finished. Now a closed-form fold.
+- **Ladder Filter** with Sat off ran away to NaN at high cutoff with resonance
+  up. The feedback goes through tanh, transparent at normal levels.
+- **An effect that outputs NaN or infinity is reset** (`FxChain`), instead of
+  staying silent until the chain is rebuilt.
+- **Denormals are flushed to zero** on every render (`MixerGraph`): silent
+  reverb and filter tails were measured 25–140× slower than the sound itself.
+- **Pitch Shifter** dropped the sign of its read offset, so every upward shift
+  came out lower; **Reverser** read the same sample for a whole segment;
+  **Tape Stop** never slowed down; and the delay line's cubic read
+  interpolated towards the wrong neighbour (zipper noise in Chorus, Flanger,
+  Delay, Reverb and the combs). All four corrected and measured.
+- **The JNI bridge checks every index and buffer size** from Kotlin, so a
+  mistake there is ignored instead of corrupting memory.
+
 ### Creative assets and Music Links
 
 Choose **LUT Library** in a clip's grade panel to use a bundled look or open a
@@ -412,6 +436,28 @@ emulator, so none of it has run on a phone. Before a release, check at least:
       browser and a chat app; cancel mid-way leaves no file; a still stretch
       stays a single long frame.
 - [ ] Drafts reopen after the app is killed (persisted document permissions).
+- [ ] Trim: drag both ends of a video clip, an audio piece and a picture-in-
+      picture layer, quickly and slowly, while playing and paused, with and
+      without mixer effects — the app stays up; the preview catches up when
+      the finger pauses or lifts.
+- [ ] Mixer effects: Resonator, Shaper (Mirror), Ladder (Sat off, high cutoff,
+      resonance 100) never silence a bus or hang an export; Pitch Shifter up
+      sounds higher; Reverser plays backwards; Tape Stop slows to a stop.
+- [ ] Crash report: after a crash (or a freeze), Settings shows *Last crash*
+      and *Share report* sends it.
+
+**Crash reports.** `CrashLog` keeps the last crash in the app's private
+storage: a Kotlin crash with its stack trace as it happens, and a native crash
+or a freeze ("not responding", with every thread's stack) read back from
+Android's exit history on the next start (Android 11+). Settings shows it under
+*Last crash* with *Share report*. Nothing is sent anywhere unless the user
+shares it.
+
+**Preview rebuilds.** A slider drag changes the project many times a second;
+the preview is rebuilt only once the drag pauses (450 ms) or ends, not on
+every step, since each rebuild replaces decoders, video graph and mixer. A
+rebuild that fails drops the player instead of leaving it half set up, and
+every call into the player from the screen is guarded.
 
 Known limits: exports run in-app (the screen is kept on while one runs) rather
 than in a background service; preview of a very long project at high zoom is

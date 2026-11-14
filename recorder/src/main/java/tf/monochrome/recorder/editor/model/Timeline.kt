@@ -66,6 +66,9 @@ fun Project.trimClip(id: String, startUs: Long, endUs: Long): Project = updateCl
         val edited = c.copy(trimStartUs = s, trimEndUs = e)
         return@updateClip if (edited.durationUs >= MIN_CLIP_US) edited else c
     }
+    // A source too short for the minimum length cannot be trimmed at all (and
+    // coerceIn on an empty range would throw on the main thread).
+    if (c.source.durationUs < minSourceSpan(c.speed)) return@updateClip c
     val s = startUs.coerceIn(0, c.source.durationUs - minSourceSpan(c.speed))
     val e = endUs.coerceIn(s + minSourceSpan(c.speed), c.source.durationUs)
     c.copy(trimStartUs = s, trimEndUs = e)
@@ -188,6 +191,7 @@ fun Project.trimAudio(id: String, startUs: Long, endUs: Long): Project = updateA
         val edited = a.copy(trimStartUs = s, trimEndUs = e, startUs = (a.startUs + shift).coerceAtLeast(0))
         return@updateAudio if (edited.durationUs >= MIN_CLIP_US) edited.clampFades() else a
     }
+    if (a.source.durationUs < minSourceSpan(a.speed)) return@updateAudio a
     val s = startUs.coerceIn(0, a.source.durationUs - minSourceSpan(a.speed))
     val e = endUs.coerceIn(s + minSourceSpan(a.speed), a.source.durationUs)
     // Trimming the head keeps the remaining sound where it was on the timeline.

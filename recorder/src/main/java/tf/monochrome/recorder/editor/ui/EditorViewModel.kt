@@ -121,6 +121,8 @@ class EditorViewModel(app: Application, private val projectId: String) : Android
 
     private var surfaceView: WeakReference<SurfaceView>? = null
     private var playerUsesOverlayGraph = false
+    /** The player reported an error; it is replaced on the next rebuild rather than reused. */
+    private var playerFailed = false
     private var player: CompositionPlayer? = null
     private var lastPlan: ExportPlan? = null
     private var rebuildJob: Job? = null
@@ -157,12 +159,14 @@ class EditorViewModel(app: Application, private val projectId: String) : Android
     fun preview(transform: (Project) -> Project) {
         val h = _history.value ?: return
         _history.value = h.replace(transform(h.present))
-        afterChange()
+        afterChange(continuous = true)
     }
 
     /** Ends a continuous edit as one step. */
     fun commit() {
         _history.value = _history.value?.commit()
+        // The drag is over: show where it ended without waiting for the debounce.
+        schedulePreview(immediate = true)
     }
 
     fun undo() {
@@ -183,7 +187,7 @@ class EditorViewModel(app: Application, private val projectId: String) : Android
         project?.texts?.lastOrNull()?.let { selection.value = Selection.Text(it.id) }
     }
 
-    private fun afterChange() {
+    private fun afterChange(continuous: Boolean = false) {
         val p = project ?: return
         // Drop a selection whose target no longer exists (deleted, undone).
         when (val s = selection.value) {
@@ -194,7 +198,7 @@ class EditorViewModel(app: Application, private val projectId: String) : Android
             Selection.None -> Unit
         }
         _playheadUs.value = _playheadUs.value.coerceIn(0, p.durationUs)
-        schedulePreview(immediate = false)
+        schedulePreview(immediate = false, continuous = continuous)
         scheduleSave()
     }
 
@@ -460,26 +464,37 @@ class EditorViewModel(app: Application, private val projectId: String) : Android
             override fun onPlayerError(error: PlaybackException) {
                 Log.w(TAG, "preview error", error)
                 _previewError.value = error.errorCodeName
+                // The next rebuild makes a new player rather than reusing this one.
+                lastPlan = null
+                playerFailed = true
             }
         })
         player = p
         playerUsesOverlayGraph = useOverlayGraph
+        playerFailed = false
         return p
     }
 
     private fun releasePlayer() {
         tickJob?.cancel()
-        player?.release()
+        player?.let { runCatching { it.release() }.onFailure { e -> Log.w(TAG, "release", e) } }
         player = null
         lastPlan = null
         _playing.value = false
         _mixerPeaks.value = FloatArray(0)
     }
 
-    private fun schedulePreview(immediate: Boolean) {
+    /**
+     * Rebuilding the preview replaces the whole player pipeline: decoders,
+     * video graph and audio mixer. A slider drag (trimming, say) changes the
+     * project many times a second, and rebuilding for each step churned the
+     * player hard enough to fail. So a drag rebuilds only once the finger
+     * pauses, and [commit] rebuilds as it ends; discrete edits still show at once.
+     */
+    private fun schedulePreview(immediate: Boolean, continuous: Boolean = false) {
         rebuildJob?.cancel()
         rebuildJob = viewModelScope.launch {
-            if (!immediate) delay(180)
+            if (!immediate) delay(if (continuous) CONTINUOUS_EDIT_DELAY_MS else EDIT_DELAY_MS)
             rebuildPreview()
         }
     }
@@ -567,7 +582,7 @@ class EditorViewModel(app: Application, private val projectId: String) : Android
             }
             val wasPlaying = player?.isPlaying == true
             val usesOverlay = plan.overlays.isNotEmpty()
-            val pl = player?.takeIf { playerUsesOverlayGraph == usesOverlay } ?: createPlayer(view, usesOverlay)
+            val pl = player?.takeIf { playerUsesOverlayGraph == usesOverlay && !playerFailed } ?: createPlayer(view, usesOverlay)
             pl.setComposition(CompositionFactory.build(getApplication(), plan, preview = true, music = music), _playheadUs.value / 1000)
             pl.prepare()
             lastPlan = plan
@@ -578,6 +593,10 @@ class EditorViewModel(app: Application, private val projectId: String) : Android
         } catch (e: Exception) {
             Log.w(TAG, "preview rebuild", e)
             _previewError.value = e.message ?: e.javaClass.simpleName
+            // setComposition can fail part-way, leaving the player half set up;
+            // any later call on it can then throw on the main thread and close
+            // the app. Drop it: the next rebuild starts from a fresh player.
+            runCatching { releasePlayer() }
         }
     }
 
@@ -585,7 +604,7 @@ class EditorViewModel(app: Application, private val projectId: String) : Android
         tickJob?.cancel()
         tickJob = viewModelScope.launch {
             while (isActive) {
-                player?.let { _playheadUs.value = it.currentPosition * 1000 }
+                player?.let { p -> runCatching { p.currentPosition }.onSuccess { _playheadUs.value = it * 1000 } }
                 delay(33)
             }
         }
@@ -593,26 +612,28 @@ class EditorViewModel(app: Application, private val projectId: String) : Android
 
     fun togglePlay() {
         val p = player ?: return
-        if (p.isPlaying) {
-            p.pause()
-            return
-        }
-        val total = project?.durationUs ?: 0
-        // From the end, play from the start again.
-        if (_playheadUs.value >= total - 50_000) seekTo(0)
-        p.play()
+        runCatching {
+            if (p.isPlaying) {
+                p.pause()
+                return
+            }
+            val total = project?.durationUs ?: 0
+            // From the end, play from the start again.
+            if (_playheadUs.value >= total - 50_000) seekTo(0)
+            p.play()
+        }.onFailure { Log.w(TAG, "play", it) }
     }
 
     /** The user moved the playhead (scrubbing the timeline). */
     fun scrubTo(timeUs: Long) {
-        player?.takeIf { it.isPlaying }?.pause()
+        runCatching { player?.takeIf { it.isPlaying }?.pause() }
         seekTo(timeUs)
     }
 
     fun seekTo(timeUs: Long) {
         val t = timeUs.coerceIn(0, project?.durationUs ?: 0)
         _playheadUs.value = t
-        player?.seekTo(t / 1000)
+        player?.let { p -> runCatching { p.seekTo(t / 1000) }.onFailure { Log.w(TAG, "seek", it) } }
     }
 
     // ── Export ─────────────────────────────────────────────────────────
@@ -654,6 +675,9 @@ class EditorViewModel(app: Application, private val projectId: String) : Android
 
         /** Same plan as an export, on a lighter canvas. */
         private val PREVIEW_SETTINGS = ExportSettings(resolution = ExportResolution.P720)
+        private const val EDIT_DELAY_MS = 180L
+        /** How long a drag must pause before the preview catches up with it. */
+        private const val CONTINUOUS_EDIT_DELAY_MS = 450L
 
         fun factory(projectId: String): ViewModelProvider.Factory = viewModelFactory {
             initializer {

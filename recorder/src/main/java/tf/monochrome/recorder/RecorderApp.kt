@@ -18,6 +18,7 @@ class RecorderApp : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        CrashLog.install(this)
         settings = SettingsStore(this)
         projects = ProjectStore(this)
         recordings = RecordingsRepository(this)

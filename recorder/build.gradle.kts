@@ -41,8 +41,8 @@ android {
         // recorder this grew out of was already @RequiresApi(Q).
         minSdk = 29
         targetSdk = 36
-        versionCode = 11
-        versionName = "2.0.0-preview.4"
+        versionCode = 12
+        versionName = "2.0.0-preview.5"
     }
 
     signingConfigs {
