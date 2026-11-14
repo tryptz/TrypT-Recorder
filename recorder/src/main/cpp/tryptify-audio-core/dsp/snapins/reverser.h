@@ -38,9 +38,12 @@ public:
             bufR_.write(dryR);
             writeCount_++;
 
-            // Read backwards from the segment boundary
-            float wetL = bufL_.readReverse(readPos_);
-            float wetR = bufR_.readReverse(readPos_);
+            // Step k of this segment plays sample N-1-k of the one before it,
+            // which is 2k+1 samples back from the newest write: the previous
+            // segment, backwards. (The buffer holds 2 x 2 s, so 2N always fits.)
+            const int back = std::min(2 * readPos_ + 1, 2 * bufL_.getMaxSegment() - 1);
+            float wetL = bufL_.readReverse(back);
+            float wetR = bufR_.readReverse(back);
 
             // Crossfade at segment boundaries
             float window = 1.0f;

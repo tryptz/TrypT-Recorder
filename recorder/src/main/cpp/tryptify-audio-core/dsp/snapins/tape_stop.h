@@ -19,7 +19,10 @@ public:
         bufL_.prepare(maxSamples);
         bufR_.prepare(maxSamples);
         currentRate_ = 1.0f;
-        readPhase_ = 0.0;
+        lag_ = 0.0;
+        catchup_ = 0;
+        maxLag_ = static_cast<double>(maxSamples - 8);
+        catchupSamples_ = std::max(1, static_cast<int>(0.01 * sampleRate));
         playing_ = true;
     }
 
@@ -56,25 +59,33 @@ public:
                 shapedRate = linear * (1.0f - curveAmt) + exponential * curveAmt;
             }
 
-            // Variable-rate read from buffer
-            readPhase_ += static_cast<double>(shapedRate);
-            int readOffset = static_cast<int>(readPhase_);
-
-            if (readOffset > 0 && shapedRate > 0.001f) {
-                float frac = static_cast<float>(readPhase_ - static_cast<double>(readOffset));
-                // Simple linear interpolation for variable rate
-                float s0L = bufL_.readReverse(1);
-                float s1L = bufL_.readReverse(0);
-                float s0R = bufR_.readReverse(1);
-                float s1R = bufR_.readReverse(0);
-                left[i]  = s0L + frac * (s1L - s0L);
-                right[i] = s0R + frac * (s1R - s0R);
-                readPhase_ -= readOffset;
-            } else if (shapedRate <= 0.001f) {
-                // Stopped: output silence or last sample
+            // The read head runs at shapedRate while the write head runs at 1,
+            // so it falls behind by (1 - rate) each sample: that lag is how far
+            // back the tape is playing from. Slowing down plays ever older
+            // audio ever slower, which is the pitch drop.
+            if (shapedRate <= 0.001f) {
+                // Stopped: silence. The next start begins from the live input.
+                lag_ = 0.0;
+                catchup_ = 0;
                 left[i] = 0.0f;
                 right[i] = 0.0f;
+                continue;
             }
+            lag_ = std::min(lag_ + 1.0 - static_cast<double>(shapedRate), maxLag_);
+            float tapeL = bufL_.readLinear(static_cast<float>(lag_));
+            float tapeR = bufR_.readLinear(static_cast<float>(lag_));
+
+            // Back at full speed but still behind: crossfade to the live input
+            // over 10 ms instead of jumping, then play live.
+            if (shapedRate >= 1.0f && lag_ > 0.0) {
+                if (catchup_ == 0) catchup_ = catchupSamples_;
+                float live = 1.0f - static_cast<float>(--catchup_) / static_cast<float>(catchupSamples_);
+                tapeL += (left[i] - tapeL) * live;
+                tapeR += (right[i] - tapeR) * live;
+                if (catchup_ == 0) lag_ = 0.0;
+            }
+            left[i] = tapeL;
+            right[i] = tapeR;
         }
     }
 
@@ -102,7 +113,8 @@ public:
     void reset() override {
         bufL_.reset(); bufR_.reset();
         currentRate_ = 1.0f;
-        readPhase_ = 0.0;
+        lag_ = 0.0;
+        catchup_ = 0;
         playing_ = true;
     }
 
@@ -118,5 +130,8 @@ private:
 
     DelayLine bufL_, bufR_;
     float currentRate_ = 1.0f;
-    double readPhase_ = 0.0;
+    double lag_ = 0.0;
+    double maxLag_ = 0.0;
+    int catchup_ = 0;
+    int catchupSamples_ = 480;
 };

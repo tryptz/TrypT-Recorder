@@ -81,8 +81,8 @@ public:
                 inR += bias_;
 
                 // Feedback with resonance
-                inL -= res * feedbackL_;
-                inR -= res * feedbackR_;
+                inL -= res * std::tanh(feedbackL_);
+                inR -= res * std::tanh(feedbackR_);
 
                 // 4 cascaded one-pole filters
                 for (int s = 0; s < 4; s++) {

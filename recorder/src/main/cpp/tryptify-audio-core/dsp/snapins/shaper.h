@@ -91,10 +91,13 @@ private:
                 if (x < 0.0f) x += 2.0f;
                 return x - 1.0f;
             case 2:  // Mirror (reflect)
-                while (x > 1.0f || x < -1.0f) {
-                    if (x > 1.0f) x = 2.0f - x;
-                    if (x < -1.0f) x = -2.0f - x;
-                }
+                // Triangle fold in closed form. A loop that reflects 2 at a time
+                // takes |x|/2 steps per sample and never ends for huge or
+                // infinite x, which hung the audio thread.
+                if (!std::isfinite(x)) return 0.0f;
+                x = std::fmod(x + 1.0f, 4.0f);
+                if (x < 0.0f) x += 4.0f;
+                x = x < 2.0f ? x - 1.0f : 3.0f - x;
                 return x;
             default:
                 return std::max(-1.0f, std::min(1.0f, x));

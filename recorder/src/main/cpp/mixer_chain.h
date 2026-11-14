@@ -7,8 +7,31 @@
 #include <cmath>
 #include <vector>
 #include <memory>
+#if defined(__i386__) || defined(__x86_64__)
+#include <xmmintrin.h>
+#endif
 
 namespace recorder {
+
+/**
+ * Tiny numbers left in a reverb or filter tail after the sound stops
+ * ("denormals") are dozens of times slower to compute with, so a silent tail
+ * can cost more than the music did. Flushing them to zero is inaudible. The
+ * setting belongs to the calling thread, so it is set on every render.
+ */
+static inline void flushDenormalsToZero() {
+#if defined(__aarch64__)
+    uint64_t fpcr;
+    asm volatile("mrs %0, fpcr" : "=r"(fpcr));
+    asm volatile("msr fpcr, %0" :: "r"(fpcr | (uint64_t{1} << 24)));
+#elif defined(__arm__)
+    uint32_t fpscr;
+    asm volatile("vmrs %0, fpscr" : "=r"(fpscr));
+    asm volatile("vmsr fpscr, %0" :: "r"(fpscr | (1u << 24)));
+#elif defined(__i386__) || defined(__x86_64__)
+    _mm_setcsr(_mm_getcsr() | 0x8040);  // FTZ + DAZ
+#endif
+}
 
 constexpr int kBlock = 512;
 constexpr int kRoles = 4;
@@ -27,16 +50,23 @@ public:
         }
         processor->setDryWet(wet);
         effects_.push_back(std::move(processor));
+        sampleRate_ = sampleRate;
     }
 
     void clear() { effects_.clear(); }
 
+    int size() const { return static_cast<int>(effects_.size()); }
+
     void setParameter(int effect, int parameter, float value) {
+        if (effect < 0 || effect >= size() || parameter < 0 || !std::isfinite(value)) return;
         auto& processor = effects_[effect];
         if (parameter < processor->getNumParameters()) processor->setParameter(parameter, value);
     }
 
-    void setWet(int effect, float wet) { effects_[effect]->setDryWet(wet); }
+    void setWet(int effect, float wet) {
+        if (effect < 0 || effect >= size() || !std::isfinite(wet)) return;
+        effects_[effect]->setDryWet(std::clamp(wet, 0.f, 1.f));
+    }
 
     void process(float* left, float* right, int frames) {
         for (auto& effect : effects_) {
@@ -47,11 +77,19 @@ public:
                 std::copy_n(right, frames, dryRight_.data());
             }
             effect->processOS(left, right, frames);
+            bool broken = false;
             for (int i = 0; i < frames; ++i) {
+                broken = broken || !std::isfinite(left[i]) || !std::isfinite(right[i]);
                 const float l = std::isfinite(left[i]) ? left[i] : 0.f;
                 const float r = std::isfinite(right[i]) ? right[i] : 0.f;
                 left[i] = wet == 1.f ? l : l * wet + dryLeft_[i] * (1.f - wet);
                 right[i] = wet == 1.f ? r : r * wet + dryRight_[i] * (1.f - wet);
+            }
+            // An effect that produced NaN or infinity keeps it in its state and
+            // stays silent for good. Clear it so it recovers on the next block.
+            if (broken) {
+                effect->reset();
+                effect->prepareOS(sampleRate_, kBlock);
             }
         }
     }
@@ -59,6 +97,7 @@ public:
 private:
     std::vector<std::unique_ptr<SnapinProcessor>> effects_;
     std::array<float, kBlock> dryLeft_{}, dryRight_{};
+    int sampleRate_ = 48000;
 };
 
 class MixerGraph {
@@ -67,6 +106,7 @@ public:
 
     void process(const float* input, int16_t* output, int frames, const float* controls,
                  bool fxEnabled, float* peaks) {
+        flushDenormalsToZero();
         std::fill_n(peaks, kBuses * 2, 0.f);
         for (int start = 0; start < frames; start += kBlock) {
             const int count = std::min(kBlock, frames - start);

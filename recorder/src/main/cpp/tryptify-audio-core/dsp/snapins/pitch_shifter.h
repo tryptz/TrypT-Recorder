@@ -19,8 +19,9 @@ public:
     void prepare(double sampleRate, int maxBlockSize) override {
         sampleRate_ = sampleRate;
         maxBlockSize_ = maxBlockSize;
-        // Max grain: 200ms at any sample rate
-        int maxSamples = static_cast<int>(0.2 * sampleRate) + 16;
+        // The longest delay a grain reads from: a 200 ms grain at +24 semitones
+        // (ratio 4) reaches back 3 grains. The jitter adds a tenth of one.
+        int maxSamples = static_cast<int>(0.2 * 3.1 * sampleRate) + 16;
         bufL_.prepare(maxSamples);
         bufR_.prepare(maxSamples);
         grainPhase_ = 0.0f;
@@ -49,22 +50,22 @@ public:
             float win1 = CrossfadeBuffer::hannWindow(phase1);
             float win2 = CrossfadeBuffer::hannWindow(phase2);
 
-            // Read positions with pitch offset
-            float offset1 = phase1 * grainSamples * rateOffset;
-            float offset2 = phase2 * grainSamples * rateOffset;
+            // Each grain reads from a delay that changes by |ratio - 1| per
+            // sample: falling from its longest to 0 to shift up, rising from 0
+            // to its longest to shift down. The read point then moves at
+            // exactly `ratio`, and the Hann windows hide each grain's jump.
+            float span = static_cast<float>(grainSamples) * std::fabs(rateOffset);
+            float delay1 = (rateOffset > 0.0f ? 1.0f - phase1 : phase1) * span;
+            float delay2 = (rateOffset > 0.0f ? 1.0f - phase2 : phase2) * span;
 
-            // Add jitter
             if (jitter_ > 0.0f) {
-                float j = (static_cast<float>(rand()) / RAND_MAX - 0.5f) * jitter_ / 100.0f * grainSamples * 0.1f;
-                offset1 += j;
-                offset2 += j;
+                float j = (static_cast<float>(rand()) / RAND_MAX) * jitter_ / 100.0f * grainSamples * 0.1f;
+                delay1 += j;
+                delay2 += j;
             }
 
-            int readIdx1 = static_cast<int>(std::fabs(offset1));
-            int readIdx2 = static_cast<int>(std::fabs(offset2));
-
-            float wetL = bufL_.readReverse(readIdx1) * win1 + bufL_.readReverse(readIdx2) * win2;
-            float wetR = bufR_.readReverse(readIdx1) * win1 + bufR_.readReverse(readIdx2) * win2;
+            float wetL = readAt(bufL_, delay1) * win1 + readAt(bufL_, delay2) * win2;
+            float wetR = readAt(bufR_, delay1) * win1 + readAt(bufR_, delay2) * win2;
 
             left[i]  = left[i] * (1.0f - m) + wetL * m;
             right[i] = right[i] * (1.0f - m) + wetR * m;
@@ -72,6 +73,14 @@ public:
             grainPhase_ += grainInc;
             if (grainPhase_ >= 1.0f) grainPhase_ -= 1.0f;
         }
+    }
+
+    /** Linear interpolation between the two samples around a fractional delay. */
+    static float readAt(const CrossfadeBuffer& buffer, float delay) {
+        delay = std::max(0.0f, std::min(delay, static_cast<float>(buffer.getMaxSegment() - 2)));
+        int whole = static_cast<int>(delay);
+        float frac = delay - static_cast<float>(whole);
+        return buffer.readReverse(whole) * (1.0f - frac) + buffer.readReverse(whole + 1) * frac;
     }
 
     void setParameter(int index, float value) override {

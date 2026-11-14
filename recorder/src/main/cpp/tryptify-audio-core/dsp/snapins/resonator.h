@@ -29,7 +29,11 @@ public:
         float delaySamples = static_cast<float>(sampleRate_) / std::max(16.0f, freq);
         float fb = 0.5f + (decay_ / 100.0f) * 0.49f;  // 0.5 to 0.99
         float intensity = intensity_ / 100.0f;
-        float dampCoeff = 0.3f * (1.0f - decay_ / 100.0f);  // More damping = shorter decay
+        // More damping = more of the feedback taken through a low-pass, so the
+        // highs die away first. A blend of the signal and its low-passed copy
+        // never has a gain above 1, so with fb < 1 the loop always decays.
+        float damping = 0.6f * (1.0f - decay_ / 100.0f);
+        constexpr float kLowpass = 0.35f;
         float m = mix_ / 100.0f;
 
         for (int i = 0; i < numFrames; i++) {
@@ -41,16 +45,17 @@ public:
             float combOutR = combR_.readCubic(delaySamples);
 
             // One-pole damping in feedback loop
-            dampL_ += dampCoeff * (combOutL - dampL_);
-            dampR_ += dampCoeff * (combOutR - dampR_);
-            float fbL = combOutL * (1.0f - dampCoeff) + dampL_;
-            float fbR = combOutR * (1.0f - dampCoeff) + dampR_;
+            dampL_ += kLowpass * (combOutL - dampL_);
+            dampR_ += kLowpass * (combOutR - dampR_);
+            float fbL = combOutL * (1.0f - damping) + dampL_ * damping;
+            float fbR = combOutR * (1.0f - damping) + dampR_ * damping;
 
             // Square timbre: add inverted comb at half delay (cancels even harmonics)
             if (timbre_ == 1) {
                 float halfDelay = delaySamples * 0.5f;
-                fbL -= combL_.readCubic(halfDelay) * 0.5f;
-                fbR -= combR_.readCubic(halfDelay) * 0.5f;
+                // Scaled so the sum's gain still stays at or below 1.
+                fbL = (fbL - combL_.readCubic(halfDelay) * 0.5f) * (1.0f / 1.5f);
+                fbR = (fbR - combR_.readCubic(halfDelay) * 0.5f) * (1.0f / 1.5f);
             }
 
             // Write input + feedback

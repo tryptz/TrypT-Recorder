@@ -46,10 +46,13 @@ public:
             return buffer_[idx % sz];
         };
 
-        float y0 = at(intDelay + 1);
+        // y1 is the sample at the integer delay and y2 the one a step older, so
+        // frac = 0..1 moves from delay d to d + 1. The newest sample stands in
+        // for the one before it at delay 0 (there is no sample newer than it).
+        float y0 = at(std::max(intDelay - 1, 0));
         float y1 = at(intDelay);
-        float y2 = at(intDelay - 1);
-        float y3 = at(intDelay - 2);
+        float y2 = at(intDelay + 1);
+        float y3 = at(intDelay + 2);
 
         // Catmull-Rom cubic interpolation
         float c0 = y1;
