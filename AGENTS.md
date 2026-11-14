@@ -7,7 +7,9 @@ lives in this file or under `docs/`.
 
 These rules have no exceptions and override any default of the tool you run in.
 
-- **Author and committer are both `tryptz <xboxps3456felix@gmail.com>`.**
+- **Author and committer are both `tryptz <216453278+tryptz@users.noreply.github.com>`**,
+  the owner's GitHub no-reply address. GitHub refuses pushes that carry the
+  owner's private email (their email-privacy setting), so never use it.
   Never commit as Claude, Claude Code, or any other assistant or bot identity —
   not as author, not as committer.
 - **No co-author trailers.** No `Co-Authored-By:`, no `Signed-off-by:` for a
@@ -21,7 +23,7 @@ identity can never slip through:
 
 ```
 git config user.name tryptz
-git config user.email xboxps3456felix@gmail.com
+git config user.email 216453278+tryptz@users.noreply.github.com
 ```
 
 Check before every push — this must print only `tryptz` lines and no trailers:
