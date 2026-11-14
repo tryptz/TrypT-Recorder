@@ -15,9 +15,14 @@ import androidx.media3.transformer.ExportException
 import tf.monochrome.recorder.capture.EncoderFit
 
 /**
- * Exports' encoders: video exactly as Media3's [delegate] makes it; audio on
- * the AAC encoder [EncoderFit.aacEncoder] picks, at [bitrate], constant where
- * the encoder allows.
+ * Exports' encoders: video as Media3's [delegate] makes it, told the export's
+ * chosen frame rate if it has one; audio on the AAC encoder
+ * [EncoderFit.aacEncoder] picks, at [bitrate], constant where the encoder
+ * allows.
+ *
+ * Media3 tells the video encoder the *source's* frame rate. With a frame rate
+ * chosen the encoder is fed a different number of frames a second, and one
+ * that shares its bitrate out per frame would miss the target by that ratio.
  *
  * Media3's own factory takes the first AAC encoder the phone lists and sets
  * the requested bitrate on it whether or not that encoder can reach it — and
@@ -28,6 +33,7 @@ class AacEncoderFactory(
     private val context: Context,
     private val delegate: Codec.EncoderFactory,
     private val bitrate: Int,
+    private val videoFrameRate: Float? = null,
 ) : Codec.EncoderFactory {
 
     override fun createForAudioEncoding(format: Format, logSessionId: LogSessionId?): Codec {
@@ -47,7 +53,10 @@ class AacEncoderFactory(
     }
 
     override fun createForVideoEncoding(format: Format, logSessionId: LogSessionId?): Codec =
-        delegate.createForVideoEncoding(format, logSessionId)
+        delegate.createForVideoEncoding(
+            videoFrameRate?.let { format.buildUpon().setFrameRate(it).build() } ?: format,
+            logSessionId,
+        )
 
     override fun audioNeedsEncoding(): Boolean = delegate.audioNeedsEncoding()
 

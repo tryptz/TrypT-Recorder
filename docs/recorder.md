@@ -9,7 +9,7 @@ repository; this repository is its standalone home.
 ## Build and test
 
 ```
-./gradlew :recorder:testDebugUnitTest    # 164 JVM tests, no device
+./gradlew :recorder:testDebugUnitTest    # 179 JVM tests, no device
 ./gradlew :recorder:lintDebug            # clean: 0 errors, 0 warnings
 ./gradlew :recorder:assembleDebug        # signed with the committed recorder/debug.keystore
 ./gradlew :recorder:assembleRelease      # R8-minified, ~10 MB
@@ -116,6 +116,13 @@ the rate while moving (`FrameTiming`) beside the file's average.
   preview and export.
 - Undo/redo (a slider drag is one step), drafts autosaved as JSON.
 - Export resolution (original, 1080p, 720p, 480p) and quality.
+- **Export frame rate**: *Source* keeps every recorded frame at its own
+  time; or 24, 25, 29.97, 30, 60, 120 or 165 frames a second, exactly. With
+  *Optical flow* on, the frames a higher rate or a slowed clip needs are made
+  from the motion between the recorded ones; off, frames are repeated or
+  dropped. Video exports only — a GIF has its own rate. (The Markers tool's
+  *Timeline frame rate* is only the step of the frame-by-frame buttons and
+  the rate written into a project hand-off; it does not change an export.)
 
 ## How it is put together
 
@@ -139,8 +146,8 @@ recorder/src/main/java/tf/monochrome/recorder/
 
 The rule that keeps it testable without a phone: decisions live in pure Kotlin
 (`CapturePlanner`, `PauseClock`, `Pcm`, `Timeline`, `History`,
-`ExportPlanner`, `CropBox`, `Grain`, and for GIFs `FrameSampler`, `YuvFrame`,
-`GifPalette`, `GifEncoder`), and the Android/Media3 layers only carry them out.
+`ExportPlanner`, `FrameRetimer`, `CropBox`, `Grain`, and for GIFs
+`FrameSampler`, `YuvFrame`, `GifPalette`, `GifEncoder`), and the Android/Media3 layers only carry them out.
 
 ### Why things are the way they are
 
@@ -232,6 +239,49 @@ The rule that keeps it testable without a phone: decisions live in pure Kotlin
   `CompositionPlayer` and `Transformer` hand per-item effects composition-time
   timestamps (checked in the 1.10.1 sources: `VideoEncoderGraphInput` adds each
   item's offset), so a title lands at the same moment in preview and export.
+- **A chosen frame rate is a fixed grid, filled by rule.** `FrameRetimer`
+  (pure, tested) lays the source's frames on a grid of k / rate seconds
+  counted from the start of the timeline, so every clip shares one cadence
+  and a cut does not disturb it. A grid time that is a source frame (to
+  within an eighth of a frame, so rounding never turns 60-from-60 into sixty
+  blends a second) is that frame, untouched. One between two source frames is
+  made between them — unless they are more than 125 ms apart at normal speed,
+  when the earlier is held: a screen recording has a frame only when the
+  screen changed, so two frames a second apart are a still picture and then a
+  change, not one slow movement to invent frames for. The limit stretches
+  with a clip's slowest speed, because a 30 fps clip at quarter speed has
+  frames 133 ms apart that are exactly the ones worth filling in.
+- **The frames between are made by optical flow, on the GPU**
+  (`FrameInterpolation`). Motion is measured on small greyscale copies, coarse
+  to fine (a pyramid from 640 px on the long side down, a few rounds of
+  Lucas–Kanade at each size), and *symmetrically*: for a point of the frame
+  halfway between, where it was in the earlier frame and where it will be in
+  the later. That puts the motion field on the frame being made, so it has
+  no holes where something moved away. Motion is stored as two 16-bit
+  numbers packed into an ordinary 8-bit texture; float render targets, which
+  not every phone can draw to, are not needed. Where the two frames still
+  disagree after being moved — measured against how much the picture varies
+  there, since a difference that is nothing across an edge is everything on
+  a plain wall — the motion is not believed and the nearer source frame is
+  shown as it is; if they disagree nearly everywhere it is a cut and the
+  whole frame is the nearer one. A repeated frame is a smaller fault than a
+  smeared one. It is the only effect that gives out more frames than it
+  takes in, so it implements Media3's `GlShaderProgram` directly: it copies
+  each source frame (handing the upstream's texture straight back), draws as
+  many output frames as it has free textures for, and asks for the next
+  source frame only when the current pair is finished.
+  It sits after a clip's own picture is graded and before grain, fades and
+  titles, which are then drawn fresh on every frame instead of being pushed
+  about with the motion; with picture-in-picture layers it runs once on the
+  joined picture. The preview never runs it. The encoder is told the chosen
+  rate (`AacEncoderFactory`), since Media3 would tell it the source's.
+  The shader source was run in headless Chromium (WebGL 2, the same shading
+  language as OpenGL ES 3) on synthetic pictures with known motion: pans,
+  scrolls, a zoom and a moving object up to an eighth of the frame per frame
+  are followed to about a tenth of a pixel and the made frame is 8–23 dB
+  closer to the true one than a cross-fade; beyond that, and across a cut,
+  the fallback takes over and the output is the nearer frame exactly. The
+  doubt thresholds were set on those pictures, not on camera footage.
 - **A GIF is made in two steps.** Transformer renders the project as a silent
   MP4 at the GIF's size and high quality — the same Composition as every
   other export, so every edit is in it — and `GifTranscoder` decodes that
@@ -345,6 +395,15 @@ emulator, so none of it has run on a phone. Before a release, check at least:
       Each preset and control changes the preview; *Show grain only* never
       reaches an export; 24 fps motion holds the grain across frames of a
       60 fps recording; a long 1080p export with colour grain still runs.
+- [ ] Export frame rate: a 30 fps clip at 60 and at 165, a 165 fps recording
+      at 60 and at 24, and a clip slowed to 0.25×, each with *Optical flow*
+      on and off — the file reports exactly the chosen rate, lasts as long
+      as the timeline, sound stays in step, motion is smooth with flow on;
+      a cut between clips is clean (no frame mixing both); a screen recording
+      that sat still and then changed does not morph; fast scrolling falls
+      back to repeated frames rather than smearing; titles, grain and fades
+      are crisp on made frames; with a picture-in-picture layer; a 4K export
+      at 60 completes; an HDR source. Nothing of this has run on a phone.
 - [ ] Crop tool: the box sits exactly over the picture; corners, edges and
       the inside each grab and follow the finger; a held shape stays held;
       the export matches the box — also after Rotate and Flip.

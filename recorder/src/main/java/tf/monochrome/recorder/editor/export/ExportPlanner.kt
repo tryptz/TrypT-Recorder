@@ -16,6 +16,7 @@ import tf.monochrome.recorder.editor.model.OverlayClip
 import tf.monochrome.recorder.editor.model.Filter
 import tf.monochrome.recorder.editor.model.Project
 import tf.monochrome.recorder.editor.model.TextPosition
+import tf.monochrome.recorder.editor.model.TimelineRate
 import tf.monochrome.recorder.editor.model.assignLanes
 import tf.monochrome.recorder.editor.model.durationUs
 import kotlin.math.max
@@ -59,7 +60,16 @@ data class ExportSettings(
     val gifFrameRate: GifFrameRate = GifFrameRate.FPS_15,
     val burnCaptions: Boolean = true,
     val aspectOverride: AspectPreset? = null,
+    /** Frames per second of an exported video; null keeps every source frame at its own time. */
+    val frameRate: TimelineRate? = null,
+    /** With a [frameRate]: make the frames between source frames from their motion, rather than repeat the nearest. */
+    val opticalFlow: Boolean = true,
 )
+
+/** A video export at a fixed [numerator] / [denominator] frames a second; see [FrameRetimer]. */
+data class PlannedFrameRate(val numerator: Int, val denominator: Int, val opticalFlow: Boolean) {
+    val fps: Float get() = numerator.toFloat() / denominator
+}
 
 /** One piece of media in a sequence, already in Media3's terms. */
 data class PlannedMedia(
@@ -143,6 +153,8 @@ data class ExportPlan(
     val audioBitrate: Int,
     /** Frames per second of the GIF made from the rendered video; null unless [mode] is GIF. */
     val gifFrameRate: Int? = null,
+    /** The chosen frame rate of a video export; null keeps the source's frames. Never set for a GIF. */
+    val frameRate: PlannedFrameRate? = null,
     val overlays: List<OverlayClip> = emptyList(),
     val mixer: Mixer? = null,
 ) {
@@ -171,6 +183,9 @@ sealed interface PlanResult {
  *  - A GIF is planned as a silent video at the GIF's size, rendered with
  *    every frame and plenty of bits: it is only the source the GIF's frames
  *    are taken from, at its own frame rate, by GifTranscoder.
+ *  - A video keeps every source frame unless a frame rate is chosen; then it
+ *    carries exactly that many a second ([FrameRetimer]) and its bitrate is
+ *    sized for them. A GIF never takes the video frame rate: it has its own.
  */
 object ExportPlanner {
     /** Gaps shorter than this are rounding noise and are dropped. */
@@ -264,6 +279,8 @@ object ExportPlanner {
         }
 
         val gif = mode == ExportMode.GIF
+        val frameRate = settings.frameRate?.takeUnless { gif }
+            ?.let { PlannedFrameRate(it.numerator, it.denominator, settings.opticalFlow) }
         val first = project.clips.first().source
         val canvas = settings.aspectOverride?.let { project.canvas.copy(aspect = it) } ?: project.canvas
         val (w, h) = if (gif) {
@@ -309,9 +326,13 @@ object ExportPlanner {
                 visuals = visuals,
                 durationUs = total,
                 // A GIF's source is rendered as well as it can be: the palette is the only loss it should see.
-                videoBitrate = bitrate(w, h, if (gif) ExportQuality.HIGH else settings.quality, outputFrameRate(project)),
+                videoBitrate = bitrate(
+                    w, h, if (gif) ExportQuality.HIGH else settings.quality,
+                    frameRate?.fps ?: outputFrameRate(project),
+                ),
                 audioBitrate = AUDIO_BITRATE,
                 gifFrameRate = if (gif) settings.gifFrameRate.fps else null,
+                frameRate = frameRate,
                 overlays = visibleOverlays(project.overlays, total),
                 mixer = project.mixer.takeIf { keepClipAudio && (primaryHasAudio || lanes.isNotEmpty()) },
             ),
@@ -410,9 +431,10 @@ object ExportPlanner {
     private fun even(v: Float): Int = max(2, (v.roundToInt() / 2) * 2)
 
     /**
-     * Frames per second the export will carry: Transformer keeps every source
-     * frame, so it is the fastest clip's rate times its speed (a 165 fps clip
-     * at 2× arrives at 330, held here to [MAX_FPS]).
+     * Frames per second the export will carry when no frame rate is chosen:
+     * Transformer keeps every source frame, so it is the fastest clip's rate
+     * times its speed (a 165 fps clip at 2× arrives at 330, held here to
+     * [MAX_FPS]).
      */
     fun outputFrameRate(project: Project): Float =
         project.clips.maxOfOrNull { c -> (if (c.source.frameRate > 0f) c.source.frameRate else NOMINAL_FPS) * c.timing.peakRate }

@@ -243,7 +243,7 @@ object ExportManager {
                 if (!audioOnly) setVideoMimeType(MimeTypes.VIDEO_H264)
                 plan.mixer?.let { setAudioMixerFactory(RecorderAudioMixerFactory(it)) }
             }
-            .setEncoderFactory(AacEncoderFactory(app, encoders, plan.audioBitrate))
+            .setEncoderFactory(AacEncoderFactory(app, encoders, plan.audioBitrate, plan.frameRate?.fps))
             .addListener(object : Transformer.Listener {
                 override fun onCompleted(composition: Composition, exportResult: ExportResult) {
                     if (gifFps != null) makeGif(app, tmp, gifFps, plan.durationUs, name) else finish(app, plan.mode, tmp, name, expectAudio = plan.hasAudio)

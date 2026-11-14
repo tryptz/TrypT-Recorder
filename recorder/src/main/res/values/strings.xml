@@ -258,6 +258,11 @@
     <string name="export_mode_gif_hint">The picture alone as a looping GIF in Pictures — no sound, at most 255 colours. Best kept short: a GIF grows quickly with length, size and frame rate.</string>
     <string name="export_resolution">Resolution</string>
     <string name="export_quality">Quality</string>
+    <string name="export_frame_rate">Frames per second</string>
+    <string name="export_frame_rate_source">Source</string>
+    <string name="export_optical_flow">Optical flow</string>
+    <string name="export_optical_flow_hint">New frames are made from the motion between the ones recorded, so a higher rate or a slowed clip moves smoothly. Exports take longer.</string>
+    <string name="export_frame_rate_repeat_hint">Frames are repeated or dropped to reach the rate. Fast, but motion is no smoother than the source.</string>
     <string name="export_gif_size">Size</string>
     <string name="export_gif_frame_rate">Frame rate</string>
     <string name="export_running">Exporting video</string>

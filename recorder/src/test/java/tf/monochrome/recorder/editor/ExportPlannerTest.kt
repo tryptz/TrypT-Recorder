@@ -14,11 +14,13 @@ import tf.monochrome.recorder.editor.export.ExportSettings
 import tf.monochrome.recorder.editor.export.GifFrameRate
 import tf.monochrome.recorder.editor.export.GifSize
 import tf.monochrome.recorder.editor.export.PlanResult
+import tf.monochrome.recorder.editor.export.PlannedFrameRate
 import tf.monochrome.recorder.editor.export.Segment
 import tf.monochrome.recorder.editor.model.AspectPreset
 import tf.monochrome.recorder.editor.model.CanvasSettings
 import tf.monochrome.recorder.editor.model.CropInsets
 import tf.monochrome.recorder.editor.model.Project
+import tf.monochrome.recorder.editor.model.TimelineRate
 import tf.monochrome.recorder.editor.model.VideoLook
 import tf.monochrome.recorder.editor.model.addAudio
 import tf.monochrome.recorder.editor.model.addText
@@ -200,6 +202,29 @@ class ExportPlannerTest {
         val at165 = plan(hfr, res = ExportResolution.P720).videoBitrate
         val at60 = plan(project(video("b", 10)), res = ExportResolution.P720).videoBitrate
         assertEquals(165.0 / 60.0, at165.toDouble() / at60, 0.01)
+    }
+
+    @Test
+    fun `a chosen frame rate is carried by video exports and sizes their bitrate`() {
+        val p = project(video("a", 10).copy(frameRate = 165f))
+        fun planAt(rate: TimelineRate?, mode: ExportMode = ExportMode.VIDEO, flow: Boolean = true) = (
+            ExportPlanner.plan(p, ExportSettings(mode = mode, resolution = ExportResolution.P720, frameRate = rate, opticalFlow = flow))
+                as PlanResult.Ok
+            ).plan
+        // Left alone, every source frame is kept and nothing is retimed.
+        assertNull(planAt(null).frameRate)
+        assertEquals(PlannedFrameRate(60, 1, opticalFlow = true), planAt(TimelineRate.FPS_60).frameRate)
+        assertEquals(PlannedFrameRate(30_000, 1_001, opticalFlow = false), planAt(TimelineRate.FPS_2997, flow = false).frameRate)
+        assertEquals(PlannedFrameRate(24, 1, opticalFlow = true), planAt(TimelineRate.FPS_24, ExportMode.VIDEO_ONLY).frameRate)
+        // Fewer frames a second need fewer bits; more need more.
+        assertEquals(60.0 / 165.0, planAt(TimelineRate.FPS_60).videoBitrate.toDouble() / planAt(null).videoBitrate, 0.01)
+        val slow = project(video("b", 10).copy(frameRate = 30f))
+        fun slowAt(rate: TimelineRate?) =
+            (ExportPlanner.plan(slow, ExportSettings(resolution = ExportResolution.P480, frameRate = rate)) as PlanResult.Ok).plan.videoBitrate
+        assertEquals(4.0, slowAt(TimelineRate.FPS_120).toDouble() / slowAt(null), 0.01)
+        // A GIF has its own frame rate, and sound has none.
+        assertNull(planAt(TimelineRate.FPS_60, ExportMode.GIF).frameRate)
+        assertNull(planAt(TimelineRate.FPS_60, ExportMode.AUDIO_ONLY).frameRate)
     }
 
     @Test

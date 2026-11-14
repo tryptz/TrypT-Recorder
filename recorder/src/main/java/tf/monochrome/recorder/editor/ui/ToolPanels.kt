@@ -57,6 +57,7 @@ import tf.monochrome.recorder.editor.model.Project
 import tf.monochrome.recorder.editor.model.SPEEDS
 import tf.monochrome.recorder.editor.model.TextItem
 import tf.monochrome.recorder.editor.model.TextPosition
+import tf.monochrome.recorder.editor.model.TimelineRate
 import tf.monochrome.recorder.editor.model.TextSize
 import tf.monochrome.recorder.editor.model.VideoClip
 import tf.monochrome.recorder.editor.model.VideoLook
@@ -664,6 +665,32 @@ fun ExportPanel(
                     label = { Text(r.shortSide?.let { "${it}p" } ?: stringResource(R.string.aspect_original)) },
                 )
             }
+        }
+        Text(stringResource(R.string.export_frame_rate), style = MaterialTheme.typography.labelLarge)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(
+                selected = settings.frameRate == null,
+                onClick = { onChange(settings.copy(frameRate = null)) },
+                label = { Text(stringResource(R.string.export_frame_rate_source)) },
+            )
+            TimelineRate.entries.forEach { rate ->
+                FilterChip(
+                    selected = settings.frameRate == rate,
+                    onClick = { onChange(settings.copy(frameRate = rate)) },
+                    label = { Text(rate.label) },
+                )
+            }
+        }
+        if (settings.frameRate != null) {
+            FilterChip(
+                selected = settings.opticalFlow,
+                onClick = { onChange(settings.copy(opticalFlow = !settings.opticalFlow)) },
+                label = { Text(stringResource(R.string.export_optical_flow)) },
+            )
+            Text(
+                stringResource(if (settings.opticalFlow) R.string.export_optical_flow_hint else R.string.export_frame_rate_repeat_hint),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
         Text(stringResource(R.string.export_quality), style = MaterialTheme.typography.labelLarge)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

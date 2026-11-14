@@ -51,6 +51,7 @@ class ClipTiming(
 
     val durationUs: Long get() = outputDuration.toLong()
     val peakRate: Float get() = samples.maxOf { it.rate }
+    val lowestRate: Float get() = samples.minOf { it.rate }
 
     private fun sampleIndex(sourceUs: Long): Int {
         val i = samples.binarySearchBy(sourceUs) { it.sourceUs }

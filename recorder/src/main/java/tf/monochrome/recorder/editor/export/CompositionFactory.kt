@@ -50,6 +50,8 @@ object CompositionFactory {
         val sequences = mutableListOf<EditedMediaItemSequence>()
         val visuals = plan.visuals
         val hasOverlay = visuals != null && plan.overlays.isNotEmpty()
+        // The preview shows the source's own frames: making frames is far too slow to play back live.
+        val frameRate = plan.frameRate.takeUnless { preview }
         val overlayLanes = plan.overlays.groupBy { it.layer }.toSortedMap(reverseOrder()).values.toList()
         // CompositionPlayer generates a silent audio input even for video-only
         // sequences. Normalize those to the same role format as decoded audio.
@@ -61,7 +63,7 @@ object CompositionFactory {
                 if (plan.primaryHasAudio) add(C.TRACK_TYPE_AUDIO)
             }
             sequences += sequence(context, types, plan.primary, plan.primaryHasAudio || routePreviewSilence) { media ->
-                videoEffects(visuals, media, finish = !hasOverlay, music = music)
+                videoEffects(visuals, media, finish = !hasOverlay, music = music, frameRate = frameRate)
             }
         }
         for (lane in plan.lanes) {
@@ -79,7 +81,12 @@ object CompositionFactory {
             if (plan.mixer != null || hasOverlay) {
                 setEffects(Effects(
                     if (plan.mixer != null) listOf(UnpackMaster()) else emptyList(),
-                    if (hasOverlay) finishingEffects(visuals, music) else emptyList(),
+                    if (hasOverlay) {
+                        // Layers are joined before this point, so the whole timeline is one stream of frames.
+                        val slowest = plan.primary.minOfOrNull { (it as? Segment.Media)?.media?.timing?.lowestRate ?: 1f } ?: 1f
+                        listOfNotNull(frameRate?.let { FrameInterpolation(it, 0, plan.durationUs, FrameRetimer.holdGapUs(slowest)) }) +
+                            finishingEffects(visuals, music)
+                    } else emptyList(),
                 ))
             }
         }.build()
@@ -241,8 +248,16 @@ object CompositionFactory {
      * Geometry first (crop, rotate/flip, fit to the canvas), then colour at
      * output size where it is cheapest, then grain, then fades and titles on
      * top — so a fade ends on clean black and titles stay crisp.
+     *
+     * A chosen frame rate is applied after the clip's own picture is finished
+     * and before anything laid over the whole timeline: frames are made from
+     * the graded picture, and grain, fades and titles are then drawn fresh on
+     * every one of them rather than being moved about with the motion.
      */
-    private fun videoEffects(v: PlannedVisuals?, media: PlannedMedia, finish: Boolean, music: MusicLinkTimeline?): List<Effect> {
+    private fun videoEffects(
+        v: PlannedVisuals?, media: PlannedMedia, finish: Boolean, music: MusicLinkTimeline?,
+        frameRate: PlannedFrameRate? = null,
+    ): List<Effect> {
         if (v == null) return emptyList()
         val out = mutableListOf<Effect>()
         media.picture.trackedCover?.let { track ->
@@ -301,7 +316,15 @@ object CompositionFactory {
             if (music?.contains(RecorderLinkTarget.SATURATION) == true) 0f else v.saturation,
         )
         picture.cover?.let { out += OverlayEffect(listOf(SolidCover { _ -> it })) }
-        if (finish) out += finishingEffects(v, music)
+        if (finish) {
+            frameRate?.let {
+                out += FrameInterpolation(
+                    it, media.timelineStartUs, media.timelineStartUs + media.durationUs,
+                    FrameRetimer.holdGapUs(media.timing.lowestRate),
+                )
+            }
+            out += finishingEffects(v, music)
+        }
         return out
     }
 
