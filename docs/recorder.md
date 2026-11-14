@@ -9,10 +9,10 @@ repository; this repository is its standalone home.
 ## Build and test
 
 ```
-./gradlew :recorder:testDebugUnitTest    # 149 JVM tests, no device
+./gradlew :recorder:testDebugUnitTest    # 164 JVM tests, no device
 ./gradlew :recorder:lintDebug            # clean: 0 errors, 0 warnings
 ./gradlew :recorder:assembleDebug        # signed with the committed recorder/debug.keystore
-./gradlew :recorder:assembleRelease      # R8-minified, ~4 MB
+./gradlew :recorder:assembleRelease      # R8-minified, ~10 MB
 ```
 
 The audio mixer builds with Android NDK 28.2.13676358 and CMake 3.22.1.
@@ -338,7 +338,7 @@ emulator, so none of it has run on a phone. Before a release, check at least:
 - [ ] Quick Settings tile start/stop; notification actions.
 - [ ] Android 14+ consent dialog, including "share one app".
 - [ ] Editor preview plays, seeks and updates for every tool; export in all
-      three modes; detached audio lines up after export.
+      four modes; detached audio lines up after export.
 - [ ] Titles and fades appear at the same times in preview and export.
 - [ ] Film grain: fine and natural at 1:1 on the phone, the same in preview
       and export, moving every frame; no mesh or banding at coarse size.

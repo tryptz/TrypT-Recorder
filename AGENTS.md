@@ -41,7 +41,9 @@ Tryptify Recorder: an Android screen recorder with a floating record button and
 a video editor that separates sound from picture. It was first developed inside
 the Tryptify repository (where it grew out of Tryptify's debug screen
 recorder); this repository is its standalone home. One Gradle module,
-`:recorder`, no native code, no submodules.
+`:recorder`, no submodules. The editor's audio mixer is native C++
+(`recorder/src/main/cpp`, built with the NDK through CMake); everything else
+is Kotlin.
 
 **Read [`docs/recorder.md`](docs/recorder.md) before changing anything** — it
 explains why the capture engine, the foreground service and the editor are
