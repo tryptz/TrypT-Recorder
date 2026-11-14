@@ -425,6 +425,7 @@ class EditorViewModel(app: Application, private val projectId: String) : Android
         if (surfaceView?.get() !== view) return
         surfaceView = null
         rebuildJob?.cancel()
+        analysisJob?.cancel()
         player?.let { p ->
             runCatching { p.clearVideoSurfaceView(view) }
             p.pause()
@@ -502,6 +503,35 @@ class EditorViewModel(app: Application, private val projectId: String) : Android
 
     private var lastPreviewLinks: List<VisualLink> = emptyList()
 
+    /** The music-link analysis the preview is waiting for, and what it is of. */
+    private var analysisJob: Job? = null
+    private var analysisKey: MusicLinkAnalysis.Key? = null
+
+    /**
+     * Music links need the whole soundtrack rendered and measured, which on a
+     * long recording takes a good while. The preview never waits for that: it
+     * plays at once without the links' effect, and is rebuilt with it when the
+     * analysis is done.
+     */
+    private fun analyseInBackground(p: Project, key: MusicLinkAnalysis.Key) {
+        if (analysisKey == key && analysisJob?.isActive == true) return
+        analysisJob?.cancel()
+        analysisKey = key
+        analysisJob = viewModelScope.launch {
+            try {
+                MusicLinkAnalysis.prepare(getApplication(), p)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "music link analysis", e)
+                return@launch
+            }
+            // Same plan, but there is now something to show for the links.
+            lastPlan = null
+            schedulePreview(immediate = true)
+        }
+    }
+
     private suspend fun rebuildPreview() {
         val p = project?.let {
             if (cropEditing) it.copy(canvas = it.canvas.copy(crop = CropInsets(), aspect = AspectPreset.ORIGINAL, fill = false)) else it
@@ -527,8 +557,14 @@ class EditorViewModel(app: Application, private val projectId: String) : Android
             return
         }
         try {
-            val music = MusicLinkAnalysis.prepare(getApplication(), p)
-            if (surfaceView?.get() !== view) return
+            val musicKey = MusicLinkAnalysis.key(p)
+            val music = musicKey?.let(MusicLinkAnalysis::cached)
+            if (musicKey != null && music == null) {
+                analyseInBackground(p, musicKey)
+            } else {
+                analysisJob?.cancel()
+                analysisKey = null
+            }
             val wasPlaying = player?.isPlaying == true
             val usesOverlay = plan.overlays.isNotEmpty()
             val pl = player?.takeIf { playerUsesOverlayGraph == usesOverlay } ?: createPlayer(view, usesOverlay)

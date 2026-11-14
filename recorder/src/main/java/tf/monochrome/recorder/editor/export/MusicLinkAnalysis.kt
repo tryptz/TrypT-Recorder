@@ -48,19 +48,36 @@ internal class MusicLinkTimeline(private val values: Map<String, FloatArray>) {
 }
 
 internal object MusicLinkAnalysis {
-    private data class Key(val plan: ExportPlan, val links: List<VisualLink>)
+    /** What an analysis depends on: the sound, and the links that listen to it. */
+    internal data class Key(val plan: ExportPlan, val links: List<VisualLink>)
     private val cache = LinkedHashMap<Key, MusicLinkTimeline>(4, 0.75f, true)
 
-    suspend fun prepare(context: Context, project: Project): MusicLinkTimeline? {
+    /** Null when [project] has nothing to analyse: no active links, or no sound. */
+    fun key(project: Project): Key? {
         val links = RecorderMusicLinks.clean(project.musicLinks).filterNot { it.paused }
         if (links.isEmpty()) return null
         val plan = (ExportPlanner.plan(project, ExportSettings(mode = ExportMode.AUDIO_ONLY)) as? PlanResult.Ok)?.plan
             ?: return null
-        val mixer = plan.mixer ?: return null
+        if (plan.mixer == null) return null
         // Picture/grade edits are irrelevant to the audio analysis and should
         // never invalidate it. Audio-only planning strips those fields.
-        val key = Key(plan, links)
-        synchronized(cache) { cache[key] }?.let { return it }
+        return Key(plan, links)
+    }
+
+    /** The finished analysis for [key], if there is one; never waits. */
+    fun cached(key: Key): MusicLinkTimeline? = synchronized(cache) { cache[key] }
+
+    /**
+     * Renders the whole soundtrack to measure it, which takes about as long as
+     * an audio export: an export waits for it, the preview must not (see
+     * EditorViewModel.rebuildPreview).
+     */
+    suspend fun prepare(context: Context, project: Project): MusicLinkTimeline? {
+        val key = key(project) ?: return null
+        cached(key)?.let { return it }
+        val plan = key.plan
+        val links = key.links
+        val mixer = plan.mixer ?: return null
         val collector = Collector(links, plan.durationUs)
         val tmp = withContext(Dispatchers.IO) {
             File.createTempFile("music-links-", ".m4a", context.cacheDir).apply { delete() }
