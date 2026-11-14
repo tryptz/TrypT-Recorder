@@ -1,7 +1,18 @@
 package tf.monochrome.recorder.editor.export
 
+import kotlinx.serialization.Serializable
+
 import tf.monochrome.recorder.editor.model.AudioClip
+import tf.monochrome.recorder.editor.model.AudioRole
+import tf.monochrome.recorder.editor.model.Mixer
+import tf.monochrome.recorder.editor.model.activeAngle
+import tf.monochrome.recorder.editor.model.AudioKind
 import tf.monochrome.recorder.editor.model.CanvasSettings
+import tf.monochrome.recorder.editor.model.AspectPreset
+import tf.monochrome.recorder.editor.model.ClipPicture
+import tf.monochrome.recorder.editor.model.ClipTiming
+import tf.monochrome.recorder.editor.model.SpeedKey
+import tf.monochrome.recorder.editor.model.OverlayClip
 import tf.monochrome.recorder.editor.model.Filter
 import tf.monochrome.recorder.editor.model.Project
 import tf.monochrome.recorder.editor.model.TextPosition
@@ -10,26 +21,44 @@ import tf.monochrome.recorder.editor.model.durationUs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
-import kotlin.math.roundToLong
 
-/** What comes out of an export. The last two are the "separate video and sound" exports. */
-enum class ExportMode {
+/**
+ * What comes out of an export. VIDEO_ONLY and AUDIO_ONLY are the "separate
+ * video and sound" exports.
+ */
+enum class ExportMode(val picture: Boolean, val sound: Boolean) {
     /** Picture and every sound, mixed. */
-    VIDEO,
+    VIDEO(picture = true, sound = true),
     /** Picture only — a silent MP4. */
-    VIDEO_ONLY,
+    VIDEO_ONLY(picture = true, sound = false),
     /** Sound only — the mixed soundtrack as an M4A. */
-    AUDIO_ONLY,
+    AUDIO_ONLY(picture = false, sound = true),
+    /** Picture only, as a looping animated GIF. */
+    GIF(picture = true, sound = false),
 }
 
 enum class ExportResolution(val shortSide: Int?) { ORIGINAL(null), P1080(1080), P720(720), P480(480) }
 
 enum class ExportQuality(val bitsPerPixel: Double) { LOW(0.04), STANDARD(0.07), HIGH(0.12) }
 
+/** A GIF's short side. Never more than the source's: upscaling only makes a GIF bigger. */
+enum class GifSize(val shortSide: Int) { SMALL(320), MEDIUM(480), LARGE(640) }
+
+/**
+ * GIF frame rates. A GIF times its frames in hundredths of a second, and
+ * browsers slow anything under two of those down, so the choices stop at 25.
+ */
+enum class GifFrameRate(val fps: Int) { FPS_10(10), FPS_15(15), FPS_20(20), FPS_25(25) }
+
+@Serializable
 data class ExportSettings(
     val mode: ExportMode = ExportMode.VIDEO,
     val resolution: ExportResolution = ExportResolution.ORIGINAL,
     val quality: ExportQuality = ExportQuality.STANDARD,
+    val gifSize: GifSize = GifSize.MEDIUM,
+    val gifFrameRate: GifFrameRate = GifFrameRate.FPS_15,
+    val burnCaptions: Boolean = true,
+    val aspectOverride: AspectPreset? = null,
 )
 
 /** One piece of media in a sequence, already in Media3's terms. */
@@ -49,7 +78,16 @@ data class PlannedMedia(
     /** Where this item lands on the output timeline, and for how long. */
     val timelineStartUs: Long,
     val durationUs: Long,
-)
+    val picture: ClipPicture = ClipPicture(),
+    val speedKeys: List<SpeedKey> = emptyList(),
+    /** Source time of the clip's original angle at the beginning of this item. */
+    val pictureSourceStartUs: Long = clipStartUs,
+    val role: AudioRole = AudioRole.DEVICE,
+) {
+    val timing by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        ClipTiming(pictureSourceStartUs, pictureSourceStartUs + clipEndUs - clipStartUs, speed, speedKeys)
+    }
+}
 
 sealed interface Segment {
     val durationUs: Long
@@ -86,6 +124,8 @@ data class PlannedVisuals(
     val fadeOutUs: Long,
     val totalUs: Long,
     val texts: List<PlannedText>,
+    /** Film grain, or null for none; see [Grain]. */
+    val grain: PlannedGrain? = null,
 )
 
 data class ExportPlan(
@@ -101,6 +141,10 @@ data class ExportPlan(
     val durationUs: Long,
     val videoBitrate: Int,
     val audioBitrate: Int,
+    /** Frames per second of the GIF made from the rendered video; null unless [mode] is GIF. */
+    val gifFrameRate: Int? = null,
+    val overlays: List<OverlayClip> = emptyList(),
+    val mixer: Mixer? = null,
 ) {
     val hasAudio: Boolean get() = primaryHasAudio || lanes.isNotEmpty()
 }
@@ -124,6 +168,9 @@ sealed interface PlanResult {
  *    its time. Anything past the end of the video is cut off there.
  *  - In an audio-only export the main track keeps its timing too: a clip with
  *    no sound to give becomes a gap of the same length.
+ *  - A GIF is planned as a silent video at the GIF's size, rendered with
+ *    every frame and plenty of bits: it is only the source the GIF's frames
+ *    are taken from, at its own frame rate, by GifTranscoder.
  */
 object ExportPlanner {
     /** Gaps shorter than this are rounding noise and are dropped. */
@@ -138,40 +185,64 @@ object ExportPlanner {
     /** AAC for every export, matching the recorder's 320 kbps. Media3's own default is 128. */
     const val AUDIO_BITRATE = 320_000
 
-    fun plan(project: Project, settings: ExportSettings): PlanResult {
+    fun plan(project: Project, settings: ExportSettings, retainMutedInputs: Boolean = false): PlanResult {
         if (project.clips.isEmpty()) return PlanResult.Nothing(PlanResult.Reason.NO_CLIPS)
         val total = project.durationUs
         val mode = settings.mode
-        val keepClipAudio = mode != ExportMode.VIDEO_ONLY
+        val keepClipAudio = mode.sound
 
         var cursor = 0L
+        val angleAudio = mutableListOf<AudioClip>()
         val primary = project.clips.map { c ->
             val start = cursor
             cursor += c.durationUs
-            val withSound = keepClipAudio && c.contributesAudio
+            val angle = c.activeAngle.takeIf { mode.picture }
+            val audible = keepClipAudio && c.contributesAudio && c.volume > 0f &&
+                (retainMutedInputs || project.mixer.isRouted(c.role))
+            val withSound = audible && angle == null
+            if (angle != null && audible) {
+                angleAudio += AudioClip(
+                    id = c.id, source = c.source, trimStartUs = c.trimStartUs, trimEndUs = c.trimEndUs,
+                    startUs = start, volume = c.volume, speed = c.speed, speedKeys = c.speedKeys,
+                    kind = AudioKind.DETACHED, role = c.role,
+                )
+            }
+            val pictureSource = angle?.source ?: c.source
+            val offset = angle?.offsetUs ?: 0
             if (mode == ExportMode.AUDIO_ONLY && !withSound) {
                 Segment.Gap(c.durationUs)
             } else {
                 Segment.Media(
                     PlannedMedia(
-                        uri = c.source.uri,
-                        sourceDurationUs = c.source.durationUs,
-                        clipStartUs = c.trimStartUs,
-                        clipEndUs = c.trimEndUs,
+                        uri = pictureSource.uri,
+                        sourceDurationUs = pictureSource.durationUs,
+                        clipStartUs = c.trimStartUs + offset,
+                        clipEndUs = c.trimEndUs + offset,
+                        pictureSourceStartUs = c.trimStartUs,
                         speed = c.speed,
-                        removeAudio = c.source.hasAudio && !withSound,
+                        speedKeys = c.speedKeys,
+                        removeAudio = pictureSource.hasAudio && !withSound,
                         removeVideo = mode == ExportMode.AUDIO_ONLY,
                         gain = if (withSound) c.volume else 1f,
+                        role = c.role,
                         fadeInUs = 0,
                         fadeOutUs = 0,
                         timelineStartUs = start,
                         durationUs = c.durationUs,
+                        picture = if (mode.picture) c.picture else ClipPicture(),
                     ),
                 )
             }
         }
-        val primaryHasAudio = keepClipAudio && project.clips.any { it.contributesAudio }
-        val lanes = if (keepClipAudio) lanes(project.audio, total) else emptyList()
+        val primaryHasAudio = keepClipAudio && project.clips.any {
+            it.contributesAudio && it.volume > 0f && (retainMutedInputs || project.mixer.isRouted(it.role)) &&
+                (!mode.picture || it.activeAngle == null)
+        }
+        val lanes = if (keepClipAudio) {
+            lanes(project.audio + angleAudio, total, project.mixer, retainMutedInputs)
+        } else {
+            emptyList()
+        }
 
         if (mode == ExportMode.AUDIO_ONLY) {
             if (!primaryHasAudio && lanes.isEmpty()) return PlanResult.Nothing(PlanResult.Reason.NO_AUDIO)
@@ -187,17 +258,24 @@ object ExportPlanner {
                     durationUs = total,
                     videoBitrate = 0,
                     audioBitrate = AUDIO_BITRATE,
+                    mixer = project.mixer,
                 ),
             )
         }
 
+        val gif = mode == ExportMode.GIF
         val first = project.clips.first().source
-        val (w, h) = canvasSize(first.width, first.height, project.canvas, settings.resolution)
+        val canvas = settings.aspectOverride?.let { project.canvas.copy(aspect = it) } ?: project.canvas
+        val (w, h) = if (gif) {
+            canvasSize(first.width, first.height, canvas, settings.gifSize.shortSide, upscale = false)
+        } else {
+            canvasSize(first.width, first.height, canvas, settings.resolution)
+        }
         val visuals = PlannedVisuals(
             width = w,
             height = h,
-            fill = project.canvas.fill,
-            canvas = project.canvas,
+            fill = canvas.fill,
+            canvas = canvas,
             filter = project.look.filter,
             brightness = project.look.brightness,
             contrast = project.look.contrast,
@@ -205,7 +283,8 @@ object ExportPlanner {
             fadeInUs = project.look.fadeInUs.coerceIn(0, total / 2),
             fadeOutUs = project.look.fadeOutUs.coerceIn(0, total / 2),
             totalUs = total,
-            texts = project.texts.mapNotNull { t ->
+            grain = Grain.plan(project.look),
+            texts = project.texts.filter { settings.burnCaptions || !it.caption }.mapNotNull { t ->
                 val s = t.startUs.coerceIn(0, total)
                 val e = t.endUs.coerceIn(0, total)
                 if (t.text.isBlank() || e - s <= 0) null
@@ -229,15 +308,31 @@ object ExportPlanner {
                 lanes = lanes,
                 visuals = visuals,
                 durationUs = total,
-                videoBitrate = bitrate(w, h, settings.quality, outputFrameRate(project)),
+                // A GIF's source is rendered as well as it can be: the palette is the only loss it should see.
+                videoBitrate = bitrate(w, h, if (gif) ExportQuality.HIGH else settings.quality, outputFrameRate(project)),
                 audioBitrate = AUDIO_BITRATE,
+                gifFrameRate = if (gif) settings.gifFrameRate.fps else null,
+                overlays = visibleOverlays(project.overlays, total),
+                mixer = project.mixer.takeIf { keepClipAudio && (primaryHasAudio || lanes.isNotEmpty()) },
             ),
         )
     }
 
+    fun visibleOverlays(overlays: List<OverlayClip>, durationUs: Long): List<OverlayClip> =
+        overlays.mapNotNull { clip ->
+            val length = minOf(clip.durationUs, durationUs - clip.startUs)
+            if (length <= 0) null else clip.copy(trimEndUs = clip.trimStartUs + length)
+        }
+
     /** Free audio, cut off at [limitUs] and packed into gap-led lanes. */
-    fun lanes(pieces: List<AudioClip>, limitUs: Long): List<List<Segment>> {
-        val usable = pieces.mapNotNull { clampTo(it, limitUs) }.filter { it.volume > 0f }
+    fun lanes(
+        pieces: List<AudioClip>,
+        limitUs: Long,
+        mixer: Mixer = Mixer(),
+        retainMutedInputs: Boolean = false,
+    ): List<List<Segment>> {
+        val usable = pieces.mapNotNull { clampTo(it, limitUs) }
+            .filter { it.volume > 0f && (retainMutedInputs || mixer.isRouted(it.audioRole)) }
         return assignLanes(usable).map { lane ->
             val out = mutableListOf<Segment>()
             var cursor = 0L
@@ -251,9 +346,11 @@ object ExportPlanner {
                         clipStartUs = a.trimStartUs,
                         clipEndUs = a.trimEndUs,
                         speed = a.speed,
+                        speedKeys = a.speedKeys,
                         removeAudio = false,
                         removeVideo = a.source.hasVideo,
                         gain = a.volume,
+                        role = a.audioRole,
                         fadeInUs = a.fadeInUs,
                         fadeOutUs = a.fadeOutUs,
                         timelineStartUs = a.startUs,
@@ -271,7 +368,7 @@ object ExportPlanner {
         if (a.endUs <= limitUs) return a
         val keepUs = limitUs - a.startUs
         if (keepUs < MIN_PIECE_US) return null
-        val trimmed = a.copy(trimEndUs = a.trimStartUs + (keepUs * a.speed).roundToLong())
+        val trimmed = a.copy(trimEndUs = a.timing.sourceAt(keepUs))
         val half = trimmed.durationUs / 2
         return trimmed.copy(fadeInUs = a.fadeInUs.coerceAtMost(half), fadeOutUs = a.fadeOutUs.coerceAtMost(half))
     }
@@ -281,7 +378,14 @@ object ExportPlanner {
      * crop and rotation, takes the chosen aspect (or keeps that one), and
      * sets the short side from the chosen resolution (or keeps the source's).
      */
-    fun canvasSize(sourceW: Int, sourceH: Int, canvas: CanvasSettings, resolution: ExportResolution): Pair<Int, Int> {
+    fun canvasSize(sourceW: Int, sourceH: Int, canvas: CanvasSettings, resolution: ExportResolution): Pair<Int, Int> =
+        canvasSize(sourceW, sourceH, canvas, resolution.shortSide, upscale = true)
+
+    /**
+     * The same, for a short side of [shortSide] pixels (null keeps the
+     * source's). Without [upscale] the short side never exceeds the source's.
+     */
+    fun canvasSize(sourceW: Int, sourceH: Int, canvas: CanvasSettings, shortSide: Int?, upscale: Boolean): Pair<Int, Int> {
         val w0 = if (sourceW > 0) sourceW else 1920
         val h0 = if (sourceH > 0) sourceH else 1080
         val crop = canvas.crop
@@ -290,7 +394,8 @@ object ExportPlanner {
         if (canvas.rotation % 180 != 0) bw = bh.also { bh = bw }
 
         val aspect = canvas.aspect.ratio ?: (bw / bh)
-        val short = resolution.shortSide?.toFloat() ?: min(bw, bh)
+        val sourceShort = min(bw, bh)
+        val short = shortSide?.toFloat()?.let { if (upscale) it else min(it, sourceShort) } ?: sourceShort
         var w = if (aspect >= 1f) short * aspect else short
         var h = if (aspect >= 1f) short else short / aspect
         val long = max(w, h)
@@ -310,7 +415,7 @@ object ExportPlanner {
      * at 2× arrives at 330, held here to [MAX_FPS]).
      */
     fun outputFrameRate(project: Project): Float =
-        project.clips.maxOfOrNull { c -> (if (c.source.frameRate > 0f) c.source.frameRate else NOMINAL_FPS) * c.speed }
+        project.clips.maxOfOrNull { c -> (if (c.source.frameRate > 0f) c.source.frameRate else NOMINAL_FPS) * c.timing.peakRate }
             ?.coerceIn(24f, MAX_FPS) ?: NOMINAL_FPS
 
     /** Sized for the frame rate actually exported, so a 165 fps recording keeps the bits it needs. */

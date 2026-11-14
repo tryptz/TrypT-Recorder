@@ -26,6 +26,14 @@ val hasCompleteReleaseSigning = listOf("storeFile", "storePassword", "keyAlias",
 android {
     namespace = "tf.monochrome.recorder"
     compileSdk = 36
+    ndkVersion = "28.2.13676358"
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
 
     defaultConfig {
         applicationId = "tf.monotrypt.recorder"
@@ -33,8 +41,8 @@ android {
         // recorder this grew out of was already @RequiresApi(Q).
         minSdk = 29
         targetSdk = 36
-        versionCode = 4
-        versionName = "1.2.0"
+        versionCode = 11
+        versionName = "2.0.0-preview.4"
     }
 
     signingConfigs {

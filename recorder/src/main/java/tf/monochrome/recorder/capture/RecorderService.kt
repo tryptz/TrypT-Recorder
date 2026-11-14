@@ -115,6 +115,7 @@ class RecorderService : Service() {
             ACTION_PAUSE -> pauseCapture()
             ACTION_RESUME -> resumeCapture()
             ACTION_STOP -> stopCapture()
+            ACTION_MARK -> if (recorder?.mark() == true) toast(getString(R.string.pro_capture_marker_saved))
             else -> refreshForeground()
         }
         return START_NOT_STICKY
@@ -130,7 +131,8 @@ class RecorderService : Service() {
         recorder?.let { rec ->
             recorder = null
             val ok = rec.stop()
-            output?.let { if (ok) it.publish(contentResolver) else it.discard(contentResolver) }
+            val saved = output?.let { if (ok) it.publish(contentResolver) else { it.discard(contentResolver); null } }
+            rec.finishSession(saved != null)
             output = null
         }
         releaseProjection()
@@ -206,7 +208,11 @@ class RecorderService : Service() {
         }
         val audioPermitted = s.audioSource.needsRecordPermission &&
             checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-        val rec = ScreenRecorder(proj, spec)
+        val session = if (s.editReady) runCatching {
+            EditReadySession.open(applicationContext, out.uri.toString())
+        }.onFailure { Log.w(TAG, "edit-ready storage unavailable", it) }.getOrNull() else null
+        if (s.editReady && session == null) toast(getString(R.string.pro_capture_session_unavailable))
+        val rec = ScreenRecorder(proj, spec, session)
         rec.onFatalError = { e ->
             main.post {
                 fail(getString(R.string.error_recording_failed, e.message ?: e.javaClass.simpleName))
@@ -218,6 +224,7 @@ class RecorderService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "start failed", e)
             runCatching { rec.stop() }
+            rec.finishSession(false)
             out.discard(contentResolver)
             fail(getString(R.string.error_recording_failed, e.message ?: e.javaClass.simpleName))
             stopCapture()
@@ -281,11 +288,13 @@ class RecorderService : Service() {
             // Joins the encoder threads; seconds at worst, never on main.
             val saved = withContext(Dispatchers.IO) {
                 val ok = rec.stop()
-                when {
+                val result = when {
                     out == null -> null
                     ok -> out.publish(contentResolver)?.copy(audioKbps = rec.audioBitrate / 1000)
                     else -> { out.discard(contentResolver); null }
                 }
+                rec.finishSession(result != null)
+                result
             }
             releaseProjection()
             stopping = false
@@ -418,6 +427,9 @@ class RecorderService : Service() {
                     .setWhen(System.currentTimeMillis() - st.elapsedMs(SystemClock.elapsedRealtime()))
                     .addAction(0, getString(R.string.action_pause), serviceIntent(ACTION_PAUSE))
                     .addAction(0, getString(R.string.action_stop), serviceIntent(ACTION_STOP))
+                if (settings.current.editReady) {
+                    b.addAction(0, getString(R.string.pro_capture_mark), serviceIntent(ACTION_MARK))
+                }
             }
             CaptureStatus.Saving -> b
                 .setContentTitle(getString(R.string.notif_saving))
@@ -489,6 +501,7 @@ class RecorderService : Service() {
         private const val NOTIF_ID = 0x7EC0
         private const val NOTIF_SAVED_ID = 0x7EC1
         private const val ACTION_START = "tf.monochrome.recorder.START"
+        private const val ACTION_MARK = "tf.monochrome.recorder.MARK"
         private const val ACTION_STOP = "tf.monochrome.recorder.STOP"
         private const val ACTION_PAUSE = "tf.monochrome.recorder.PAUSE"
         private const val ACTION_RESUME = "tf.monochrome.recorder.RESUME"
@@ -515,6 +528,7 @@ class RecorderService : Service() {
         fun pause(context: Context) = control(context, ACTION_PAUSE)
         fun resume(context: Context) = control(context, ACTION_RESUME)
         fun stop(context: Context) = control(context, ACTION_STOP)
+        fun mark(context: Context) = control(context, ACTION_MARK)
 
         /** Controls only ever reach a service that is already running in the foreground. */
         private fun control(context: Context, action: String) {

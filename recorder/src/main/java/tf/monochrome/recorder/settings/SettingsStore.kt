@@ -6,6 +6,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
+import tf.monochrome.recorder.editor.model.RecorderMusicLinks
+import tf.monochrome.recorder.editor.model.VisualLink
+
 /**
  * SharedPreferences-backed settings, exposed as a StateFlow. The service, the
  * tile and the UI all read the same instance (see RecorderApp), so a change in
@@ -18,6 +21,13 @@ class SettingsStore(context: Context) {
     val settings: StateFlow<RecorderSettings> = state.asStateFlow()
     val current: RecorderSettings get() = state.value
 
+    internal val musicLinks: List<VisualLink>
+        get() = RecorderMusicLinks.decode(prefs.getString(K_MUSIC_LINKS, "").orEmpty())
+
+    internal fun saveMusicLinks(links: List<VisualLink>) {
+        prefs.edit { putString(K_MUSIC_LINKS, RecorderMusicLinks.encode(links)) }
+    }
+
     fun update(transform: (RecorderSettings) -> RecorderSettings) {
         val next = transform(state.value)
         state.value = next
@@ -29,6 +39,7 @@ class SettingsStore(context: Context) {
             putInt(K_COUNTDOWN, next.countdownSeconds)
             putBoolean(K_BUTTON, next.floatingButton)
             putBoolean(K_HIDE, next.hideButtonWhileRecording)
+            putBoolean(K_EDIT_READY, next.editReady)
         }
     }
 
@@ -42,6 +53,7 @@ class SettingsStore(context: Context) {
             countdownSeconds = prefs.getInt(K_COUNTDOWN, d.countdownSeconds),
             floatingButton = prefs.getBoolean(K_BUTTON, d.floatingButton),
             hideButtonWhileRecording = prefs.getBoolean(K_HIDE, d.hideButtonWhileRecording),
+            editReady = prefs.getBoolean(K_EDIT_READY, d.editReady),
         )
     }
 
@@ -49,12 +61,14 @@ class SettingsStore(context: Context) {
         name?.let { n -> enumValues<E>().firstOrNull { it.name == n } } ?: fallback
 
     private companion object {
+        const val K_MUSIC_LINKS = "music_links"
         const val K_AUDIO = "audio_source"
         const val K_RES = "resolution"
         const val K_FPS = "frame_rate"
         const val K_QUALITY = "quality"
         const val K_COUNTDOWN = "countdown"
         const val K_BUTTON = "floating_button"
+        const val K_EDIT_READY = "edit_ready"
         const val K_HIDE = "hide_button_while_recording"
     }
 }

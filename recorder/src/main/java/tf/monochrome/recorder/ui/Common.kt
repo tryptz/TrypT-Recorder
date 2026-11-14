@@ -126,7 +126,14 @@ fun ExportStatusDialog(state: ExportState, onCancel: () -> Unit, onDismiss: () -
         ExportState.Idle -> Unit
         is ExportState.Running -> AlertDialog(
             onDismissRequest = {},
-            title = { Text(stringResource(if (state.mode == ExportMode.AUDIO_ONLY) R.string.export_running_audio else R.string.export_running)) },
+            title = {
+                val title = when (state.mode) {
+                    ExportMode.AUDIO_ONLY -> R.string.export_running_audio
+                    ExportMode.GIF -> R.string.export_running_gif
+                    ExportMode.VIDEO, ExportMode.VIDEO_ONLY -> R.string.export_running
+                }
+                Text(stringResource(title))
+            },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     val p = state.percent
@@ -145,12 +152,26 @@ fun ExportStatusDialog(state: ExportState, onCancel: () -> Unit, onDismiss: () -
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(stringResource(R.string.toast_saved, state.saved.relativePath + state.saved.displayName))
-                    MediaSummaryLine(state.saved.uri.toUri())
+                    val gif = state.gif
+                    if (gif != null) {
+                        // `480×1066 · 15 fps · 3.4 MB` — the media inspector reads video and audio, not GIFs.
+                        Text(
+                            "${gif.width}×${gif.height} · ${stringResource(R.string.fps, gif.fps)} · ${formatBytes(context, gif.bytes)}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        MediaSummaryLine(state.saved.uri.toUri())
+                    }
                 }
             },
             confirmButton = {
                 TextButton(onClick = {
-                    val mime = if (state.mode == ExportMode.AUDIO_ONLY) "audio/mp4" else "video/mp4"
+                    val mime = when (state.mode) {
+                        ExportMode.AUDIO_ONLY -> "audio/mp4"
+                        ExportMode.GIF -> "image/gif"
+                        ExportMode.VIDEO, ExportMode.VIDEO_ONLY -> "video/mp4"
+                    }
                     share(context, state.saved.uri.toUri(), mime)
                     onDismiss()
                 }) { Text(stringResource(R.string.action_share)) }

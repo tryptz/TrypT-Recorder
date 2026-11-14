@@ -25,12 +25,15 @@ class MediaStoreFile private constructor(
     enum class Kind(val mime: String, val extension: String, val root: String) {
         VIDEO("video/mp4", ".mp4", "Movies"),
         AUDIO("audio/mp4", ".m4a", "Music"),
+        // An image: MediaStore only takes those under Pictures/ or DCIM/.
+        GIF("image/gif", ".gif", "Pictures"),
         ;
 
         val collection: Uri
             get() = when (this) {
                 VIDEO -> MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
                 AUDIO -> MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                GIF -> MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
             }
     }
 
@@ -39,7 +42,7 @@ class MediaStoreFile private constructor(
         runCatching { pfd.close() }
         val done = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
         return runCatching { resolver.update(uri, done, null, null) }
-            .map { SavedRecording(uri.toString(), displayName, "$relativePath/") }
+            .map { rows -> if (rows > 0) SavedRecording(uri.toString(), displayName, "$relativePath/") else null }
             .getOrNull()
     }
 
@@ -49,7 +52,23 @@ class MediaStoreFile private constructor(
     }
 
     companion object {
-        /** Folder under Movies/ or Music/ everything this app writes goes into. */
+        fun describe(resolver: ContentResolver, uri: Uri): Pair<Boolean, SavedRecording>? = runCatching {
+            val columns = arrayOf(MediaStore.MediaColumns.IS_PENDING, MediaStore.MediaColumns.DISPLAY_NAME,
+                MediaStore.MediaColumns.RELATIVE_PATH)
+            resolver.query(uri, columns, null, null, null)?.use { cursor ->
+                if (!cursor.moveToFirst()) null
+                else (cursor.getInt(0) != 0) to SavedRecording(uri.toString(), cursor.getString(1), cursor.getString(2))
+            }
+        }.getOrNull()
+
+        fun reopen(resolver: ContentResolver, uri: Uri): MediaStoreFile? {
+            val (pending, saved) = describe(resolver, uri) ?: return null
+            if (!pending) return null
+            val fd = runCatching { resolver.openFileDescriptor(uri, "rwt") }.getOrNull() ?: return null
+            return MediaStoreFile(uri, saved.displayName, saved.relativePath.trimEnd('/'), fd)
+        }
+
+        /** Folder under Movies/, Music/ or Pictures/ everything this app writes goes into. */
         fun relativePath(kind: Kind) = "${kind.root}/${RecorderApp.FOLDER}"
 
         /** Keeps a user-typed name to characters every file system accepts. */

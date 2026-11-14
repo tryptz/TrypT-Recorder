@@ -53,13 +53,19 @@ fun Project.splitAt(timeUs: Long): Project {
     val c = clips[i]
     val offsetOnTimeline = timeUs - clipStartUs(i)
     if (offsetOnTimeline < MIN_CLIP_US || c.durationUs - offsetOnTimeline < MIN_CLIP_US) return this
-    val cut = c.trimStartUs + (offsetOnTimeline * c.speed).roundToLong()
+    val cut = c.sourceAt(offsetOnTimeline)
     val left = c.copy(trimEndUs = cut)
     val right = c.copy(id = newId(), trimStartUs = cut)
     return copy(clips = clips.toMutableList().apply { set(i, left); add(i + 1, right) })
 }
 
 fun Project.trimClip(id: String, startUs: Long, endUs: Long): Project = updateClip(id) { c ->
+    if (c.speedKeys.isNotEmpty()) {
+        val s = startUs.coerceIn(0, c.source.durationUs)
+        val e = endUs.coerceIn(s, c.source.durationUs)
+        val edited = c.copy(trimStartUs = s, trimEndUs = e)
+        return@updateClip if (edited.durationUs >= MIN_CLIP_US) edited else c
+    }
     val s = startUs.coerceIn(0, c.source.durationUs - minSourceSpan(c.speed))
     val e = endUs.coerceIn(s + minSourceSpan(c.speed), c.source.durationUs)
     c.copy(trimStartUs = s, trimEndUs = e)
@@ -72,7 +78,7 @@ fun Project.trimStartToPlayhead(id: String, timeUs: Long): Project {
     val c = clips[i]
     val offset = timeUs - clipStartUs(i)
     if (offset <= 0 || offset >= c.durationUs) return this
-    return trimClip(id, c.trimStartUs + (offset * c.speed).roundToLong(), c.trimEndUs)
+    return trimClip(id, c.sourceAt(offset), c.trimEndUs)
 }
 
 /** Trims the clip's end so that it stops where the playhead is now. */
@@ -82,13 +88,13 @@ fun Project.trimEndToPlayhead(id: String, timeUs: Long): Project {
     val c = clips[i]
     val offset = timeUs - clipStartUs(i)
     if (offset <= 0 || offset >= c.durationUs) return this
-    return trimClip(id, c.trimStartUs, c.trimStartUs + (offset * c.speed).roundToLong())
+    return trimClip(id, c.trimStartUs, c.sourceAt(offset))
 }
 
 fun Project.setClipSpeed(id: String, speed: Float): Project = updateClip(id) { c ->
     val s = speed.coerceIn(SPEEDS.first(), SPEEDS.last())
     // A faster clip must still be at least MIN_CLIP_US long on the timeline.
-    if (c.sourceSpanUs / s < MIN_CLIP_US) c else c.copy(speed = s)
+    if (c.sourceSpanUs / s < MIN_CLIP_US) c else c.copy(speed = s, speedKeys = emptyList())
 }
 
 fun Project.setClipVolume(id: String, volume: Float): Project =
@@ -131,6 +137,8 @@ fun Project.detachAudio(id: String): Project {
         // A muted clip's sound is detached in order to work with it, so it comes back audible.
         volume = if (c.volume > 0f) c.volume else 1f,
         speed = c.speed,
+        speedKeys = c.speedKeys,
+        role = c.role,
         kind = AudioKind.DETACHED,
         linkedClipId = c.id,
     )
@@ -172,6 +180,14 @@ fun Project.addAudio(ref: MediaRef, atUs: Long): Project {
 fun Project.moveAudio(id: String, startUs: Long): Project = updateAudio(id) { it.copy(startUs = startUs.coerceAtLeast(0)) }
 
 fun Project.trimAudio(id: String, startUs: Long, endUs: Long): Project = updateAudio(id) { a ->
+    if (a.speedKeys.isNotEmpty()) {
+        val s = startUs.coerceIn(0, a.source.durationUs)
+        val e = endUs.coerceIn(s, a.source.durationUs)
+        val shift = if (s >= a.trimStartUs) ClipTiming(a.trimStartUs, s, a.speed, a.speedKeys).durationUs
+        else -ClipTiming(s, a.trimStartUs, a.speed, a.speedKeys).durationUs
+        val edited = a.copy(trimStartUs = s, trimEndUs = e, startUs = (a.startUs + shift).coerceAtLeast(0))
+        return@updateAudio if (edited.durationUs >= MIN_CLIP_US) edited.clampFades() else a
+    }
     val s = startUs.coerceIn(0, a.source.durationUs - minSourceSpan(a.speed))
     val e = endUs.coerceIn(s + minSourceSpan(a.speed), a.source.durationUs)
     // Trimming the head keeps the remaining sound where it was on the timeline.
@@ -191,7 +207,7 @@ fun Project.splitAudioAt(id: String, timeUs: Long): Project {
     val a = audio[i]
     val offset = timeUs - a.startUs
     if (offset < MIN_CLIP_US || a.durationUs - offset < MIN_CLIP_US) return this
-    val cut = a.trimStartUs + (offset * a.speed).roundToLong()
+    val cut = a.timing.sourceAt(offset)
     val left = a.copy(trimEndUs = cut, fadeOutUs = 0).clampFades()
     val right = a.copy(id = newId(), trimStartUs = cut, startUs = a.startUs + offset, fadeInUs = 0).clampFades()
     return copy(audio = audio.toMutableList().apply { set(i, left); add(i + 1, right) })
@@ -235,11 +251,11 @@ fun assignLanes(pieces: List<AudioClip>): List<List<AudioClip>> {
 
 // ── Text ───────────────────────────────────────────────────────────────
 
-fun Project.addText(text: String, atUs: Long, lengthUs: Long = 3_000_000): Project {
+fun Project.addText(text: String, atUs: Long, lengthUs: Long = 3_000_000, caption: Boolean = false): Project {
     val end = durationUs
     val start = atUs.coerceIn(0, (end - MIN_CLIP_US).coerceAtLeast(0))
     val stop = (start + lengthUs).coerceAtMost(end.coerceAtLeast(start + MIN_CLIP_US))
-    return copy(texts = texts + TextItem(id = newId(), text = text, startUs = start, endUs = stop))
+    return copy(texts = texts + TextItem(id = newId(), text = text, startUs = start, endUs = stop, caption = caption))
 }
 
 fun Project.updateText(id: String, f: (TextItem) -> TextItem): Project = copy(

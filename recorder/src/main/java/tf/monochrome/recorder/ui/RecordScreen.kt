@@ -128,6 +128,12 @@ fun RecordScreen(onEdit: (Uri) -> Unit, modifier: Modifier = Modifier) {
             }
         }
 
+        if (st is CaptureStatus.Recording && !st.isPaused && settings.editReady) {
+            OutlinedButton(onClick = { RecorderService.mark(context) }) {
+                Text(stringResource(R.string.pro_capture_mark))
+            }
+        }
+
         error?.let {
             Text(
                 it,
@@ -168,6 +174,18 @@ fun RecordScreen(onEdit: (Uri) -> Unit, modifier: Modifier = Modifier) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 6.dp),
             )
+        }
+
+        if (!status.isActive) {
+            Spacer(Modifier.height(12.dp))
+            Card(padding = 0.dp) {
+                SwitchRow(
+                    title = stringResource(R.string.pro_capture_edit_ready),
+                    subtitle = stringResource(R.string.pro_capture_edit_ready_hint),
+                    checked = settings.editReady,
+                    onChange = { on -> store.update { it.copy(editReady = on) } },
+                )
+            }
         }
 
         Spacer(Modifier.height(12.dp))

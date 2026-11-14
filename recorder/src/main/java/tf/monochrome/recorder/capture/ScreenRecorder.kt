@@ -17,6 +17,7 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.Surface
 import tf.monochrome.recorder.settings.AudioSource
+import tf.monochrome.recorder.editor.model.AudioRole
 import java.io.FileDescriptor
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -55,6 +56,7 @@ data class CaptureSpec(
 class ScreenRecorder(
     private val projection: MediaProjection,
     private val spec: CaptureSpec,
+    private val session: EditReadySession? = null,
 ) {
     /** Called at most once, from a worker thread, if the capture fails while running. */
     var onFatalError: ((Throwable) -> Unit)? = null
@@ -96,6 +98,7 @@ class ScreenRecorder(
         Log.i(TAG, "capture ${v.width}x${v.height}@${v.fps} ${v.bitrate / 1000} kbps audio=${spec.audio}")
 
         openAudio(if (audioPermitted) spec.audio else AudioSource.NONE)
+        session?.expect(effectiveAudio.usesDevice, effectiveAudio.usesMic)
 
         val mux = MediaMuxer(fd, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
         muxer = mux
@@ -152,6 +155,23 @@ class ScreenRecorder(
             micRecord?.startRecording()
             audioPumpThread = Thread({ audioPumpLoop(aCodec) }, "rec-apump").also { it.start() }
             audioDrainThread = Thread({ drainLoop(aCodec, isVideo = false, g) }, "rec-adrain").also { it.start() }
+        }
+    }
+
+    fun mark(): Boolean {
+        if (!running.get() || session == null) return false
+        session.mark(clock.adjust(nowUs()))
+        return true
+    }
+
+    fun finishSession(published: Boolean) {
+        val current = session ?: return
+        val origin = gate?.originUs()
+        if (published && origin != null) {
+            runCatching { current.publish(origin, audioPumpThread?.isAlive != true) }
+                .onFailure { Log.w(TAG, "save edit-ready session", it) }
+        } else if (audioPumpThread?.isAlive != true) {
+            current.discard()
         }
     }
 
@@ -272,7 +292,7 @@ class ScreenRecorder(
         fun read(out: ShortArray): Int
     }
 
-    private fun blockReader(): BlockReader {
+    private fun blockReader(deviceBlock: ShortArray): BlockReader {
         val device = deviceRecord
         val mic = micRecord
         val mono = ShortArray(BLOCK_FRAMES)
@@ -295,7 +315,6 @@ class ScreenRecorder(
                 // without waiting into a FIFO and taken back out in step with it.
                 val fifo = ShortFifo(SAMPLE_RATE) // half a second of stereo
                 val scratch = ShortArray(BLOCK_FRAMES * 2)
-                val deviceBlock = ShortArray(BLOCK_FRAMES * 2)
                 var deviceAlive = true
                 BlockReader { out ->
                     val n = readMic(mic, out)
@@ -308,7 +327,6 @@ class ScreenRecorder(
                         }
                     }
                     fifo.readPadded(deviceBlock, n * 2)
-                    Pcm.mixInto(out, deviceBlock, n * 2)
                     n
                 }
             }
@@ -323,7 +341,8 @@ class ScreenRecorder(
 
     /** PCM blocks into the AAC encoder, stamped on the monotonic clock. */
     private fun audioPumpLoop(codec: MediaCodec) {
-        val reader = blockReader()
+        val deviceBlock = ShortArray(BLOCK_FRAMES * 2)
+        val reader = blockReader(deviceBlock)
         val block = ShortArray(BLOCK_FRAMES * 2)
         var anchorUs = -1L
         var framesSinceAnchor = 0L
@@ -349,6 +368,13 @@ class ScreenRecorder(
                     anchorUs = maxOf(nowUs() - blockUs, clock.lastResumeUs())
                     framesSinceAnchor = 0
                 }
+                val alignedUs = clock.adjust(anchorUs + framesSinceAnchor * 1_000_000L / SAMPLE_RATE)
+                if (effectiveAudio.usesMic) session?.append(AudioRole.DIALOGUE, alignedUs, block, frames)
+                if (effectiveAudio.usesDevice) {
+                    val pcm = if (effectiveAudio.usesMic) deviceBlock else block
+                    session?.append(AudioRole.DEVICE, alignedUs, pcm, frames)
+                }
+                if (effectiveAudio == AudioSource.DEVICE_AND_MIC) Pcm.mixInto(block, deviceBlock, frames * 2)
                 var offset = 0
                 val samples = frames * 2
                 while (offset < samples && running.get()) {
@@ -375,6 +401,8 @@ class ScreenRecorder(
         } catch (e: IllegalStateException) {
             // Codec torn down underneath us during stop.
             return
+        } finally {
+            session?.finishAudio()
         }
         // End of stream.
         runCatching {
@@ -443,6 +471,9 @@ class ScreenRecorder(
         private val pending = ArrayDeque<Pending>()
         private var pendingBytes = 0
         private val lastPts = longArrayOf(Long.MIN_VALUE, Long.MIN_VALUE)
+        private var firstPts = Long.MAX_VALUE
+
+        fun originUs(): Long? = synchronized(lock) { firstPts.takeUnless { it == Long.MAX_VALUE } }
         private val info = MediaCodec.BufferInfo()
         private var videoSamples = 0
 
@@ -512,6 +543,7 @@ class ScreenRecorder(
             lastPts[slot] = pts
             info.set(offset, size, pts, flags)
             muxer.writeSampleData(track, buf, info)
+            firstPts = minOf(firstPts, pts)
             if (isVideo) videoSamples++
         }
     }

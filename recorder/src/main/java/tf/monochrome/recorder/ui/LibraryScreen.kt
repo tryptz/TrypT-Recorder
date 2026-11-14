@@ -43,6 +43,7 @@ import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
@@ -70,6 +71,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
 import tf.monochrome.recorder.R
 import tf.monochrome.recorder.RecorderApp
 import tf.monochrome.recorder.capture.formatDuration
@@ -77,6 +79,7 @@ import tf.monochrome.recorder.editor.EditorLauncher
 import tf.monochrome.recorder.editor.export.ExportManager
 import tf.monochrome.recorder.editor.export.PlanResult
 import tf.monochrome.recorder.editor.store.ProjectSummary
+import tf.monochrome.recorder.editor.store.ProjectBundle
 import tf.monochrome.recorder.media.Recording
 import tf.monochrome.recorder.media.RecordingsRepository
 import tf.monochrome.recorder.media.Thumbnails
@@ -101,6 +104,23 @@ fun LibraryScreen(
     var deleting by remember { mutableStateOf<Recording?>(null) }
     var deletingDraft by remember { mutableStateOf<ProjectSummary?>(null) }
     var detailsOf by remember { mutableStateOf<Recording?>(null) }
+    var importingBundle by remember { mutableStateOf(false) }
+
+    val bundlePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null && !importingBundle) scope.launch {
+            importingBundle = true
+            try {
+                val draft = ProjectBundle.import(context, uri, store)
+                onOpenProject(draft.id)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                android.widget.Toast.makeText(context, R.string.pro_bundle_import_error, android.widget.Toast.LENGTH_LONG).show()
+            } finally {
+                importingBundle = false
+            }
+        }
+    }
 
     LaunchedEffect(Unit) { store.refresh() }
 
@@ -167,6 +187,11 @@ fun LibraryScreen(
                     }
                 }
             } else {
+                OutlinedButton(
+                    enabled = !importingBundle,
+                    onClick = { bundlePicker.launch(arrayOf("application/zip", "application/octet-stream")) },
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                ) { Text(stringResource(if (importingBundle) R.string.pro_bundle_importing else R.string.pro_bundle_import)) }
                 if (drafts.isEmpty()) {
                     Empty(stringResource(R.string.library_no_drafts))
                 } else {

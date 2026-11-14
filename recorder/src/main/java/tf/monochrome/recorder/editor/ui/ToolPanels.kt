@@ -25,22 +25,33 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import tf.monochrome.recorder.R
+import tf.monochrome.recorder.RecorderApp
 import tf.monochrome.recorder.capture.formatDuration
 import tf.monochrome.recorder.editor.export.ExportMode
+import tf.monochrome.recorder.editor.export.ExportPlanner
 import tf.monochrome.recorder.editor.export.ExportQuality
 import tf.monochrome.recorder.editor.export.ExportResolution
 import tf.monochrome.recorder.editor.export.ExportSettings
+import tf.monochrome.recorder.editor.export.GifFrameRate
+import tf.monochrome.recorder.editor.export.GifSize
+import tf.monochrome.recorder.editor.export.Grain
 import tf.monochrome.recorder.editor.model.AspectPreset
 import tf.monochrome.recorder.editor.model.AudioClip
+import tf.monochrome.recorder.editor.model.CropBox
 import tf.monochrome.recorder.editor.model.CropInsets
 import tf.monochrome.recorder.editor.model.Filter
+import tf.monochrome.recorder.editor.model.GrainDetail
+import tf.monochrome.recorder.editor.model.GrainMotion
+import tf.monochrome.recorder.editor.model.GrainPreset
 import tf.monochrome.recorder.editor.model.MAX_VOLUME
 import tf.monochrome.recorder.editor.model.Project
 import tf.monochrome.recorder.editor.model.SPEEDS
@@ -48,6 +59,7 @@ import tf.monochrome.recorder.editor.model.TextItem
 import tf.monochrome.recorder.editor.model.TextPosition
 import tf.monochrome.recorder.editor.model.TextSize
 import tf.monochrome.recorder.editor.model.VideoClip
+import tf.monochrome.recorder.editor.model.VideoLook
 import tf.monochrome.recorder.editor.model.durationUs
 import tf.monochrome.recorder.editor.model.moveAudio
 import tf.monochrome.recorder.editor.model.setAudioFades
@@ -59,15 +71,17 @@ import tf.monochrome.recorder.editor.model.trimClip
 import tf.monochrome.recorder.editor.model.trimEndToPlayhead
 import tf.monochrome.recorder.editor.model.trimStartToPlayhead
 import tf.monochrome.recorder.editor.model.updateText
+import kotlin.math.roundToInt
 
 /** The panel a tool opens below the timeline. */
 enum class Tool {
-    NONE, TRIM, SPEED, VOLUME, AUDIO_FADES, AUDIO_POSITION, TEXT, CANVAS, FILTERS, ADJUST, VIDEO_FADES, EXPORT;
+    NONE, PRECISION, ANGLES, MIXER, CAPTIONS, TRIM, SPEED, VOLUME, AUDIO_FADES, AUDIO_POSITION, TEXT, CROP, CANVAS, FILTERS, ADJUST, GRAIN, VIDEO_FADES, MOTION, CLIP_GRADE, COVER, OVERLAY, MARKERS, EXPORT;
 
     /** Whether this tool still makes sense for [selection]. */
     fun fits(selection: Selection): Boolean = when (this) {
         TRIM, VOLUME -> selection is Selection.Clip || selection is Selection.Audio
-        SPEED -> selection is Selection.Clip
+        SPEED, MOTION, CLIP_GRADE, COVER, PRECISION, ANGLES -> selection is Selection.Clip
+        OVERLAY -> selection is Selection.Overlay
         AUDIO_FADES, AUDIO_POSITION -> selection is Selection.Audio
         TEXT -> selection is Selection.Text
         else -> true
@@ -123,7 +137,7 @@ fun SpeedPanel(vm: EditorViewModel, clip: VideoClip) {
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         SPEEDS.forEach { s ->
             FilterChip(
-                selected = clip.speed == s,
+                selected = clip.speedKeys.isEmpty() && clip.speed == s,
                 onClick = { vm.edit { it.setClipSpeed(clip.id, s) } },
                 label = { Text("${s.toString().removeSuffix(".0")}×") },
             )
@@ -291,21 +305,92 @@ fun CanvasPanel(vm: EditorViewModel, project: Project) {
         FilterChip(selected = c.flipHorizontal, onClick = { vm.edit { it.copy(canvas = it.canvas.copy(flipHorizontal = !c.flipHorizontal)) } }, label = { Text(stringResource(R.string.flip_horizontal)) })
         FilterChip(selected = c.flipVertical, onClick = { vm.edit { it.copy(canvas = it.canvas.copy(flipVertical = !c.flipVertical)) } }, label = { Text(stringResource(R.string.flip_vertical)) })
     }
-    Text(stringResource(R.string.crop), style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 4.dp))
-    CropSlider(stringResource(R.string.crop_left), c.crop.left, vm::commit) { v -> vm.preview { it.copy(canvas = it.canvas.copy(crop = it.canvas.crop.copy(left = v))) } }
-    CropSlider(stringResource(R.string.crop_right), c.crop.right, vm::commit) { v -> vm.preview { it.copy(canvas = it.canvas.copy(crop = it.canvas.crop.copy(right = v))) } }
-    CropSlider(stringResource(R.string.crop_top), c.crop.top, vm::commit) { v -> vm.preview { it.copy(canvas = it.canvas.copy(crop = it.canvas.crop.copy(top = v))) } }
-    CropSlider(stringResource(R.string.crop_bottom), c.crop.bottom, vm::commit) { v -> vm.preview { it.copy(canvas = it.canvas.copy(crop = it.canvas.crop.copy(bottom = v))) } }
+}
+
+/** Shapes the crop box can be held to while dragging. */
+enum class CropRatio(private val pixels: Float?) {
+    FREE(null),
+    ORIGINAL(null),
+    SQUARE(1f),
+    PORTRAIT(4f / 5f),
+    TALL(9f / 16f),
+    WIDE(16f / 9f),
+    CLASSIC(4f / 3f),
+    CLASSIC_TALL(3f / 4f),
+    ;
+
+    /** The lock as a ratio of fractions of a picture [frameAspect] wide per unit high; null if free. */
+    fun normalized(frameAspect: Float): Float? = when (this) {
+        FREE -> null
+        ORIGINAL -> 1f
+        else -> CropBox.normalizedRatio(pixels!!, frameAspect)
+    }
+}
+
+/** Width and height of the whole first clip as shown — turned, uncropped. Null with no clips. */
+fun shownFrame(project: Project): Pair<Int, Int>? = project.clips.firstOrNull()?.source?.let { s ->
+    ExportPlanner.canvasSize(
+        s.width,
+        s.height,
+        project.canvas.copy(crop = CropInsets(), aspect = AspectPreset.ORIGINAL),
+        ExportResolution.ORIGINAL,
+    )
+}
+
+/**
+ * The crop tool's panel; the box itself is dragged on the picture
+ * ([CropOverlay]). Picking a shape fits the largest box of it.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun CropPanel(vm: EditorViewModel, project: Project, ratio: CropRatio, onRatio: (CropRatio) -> Unit) {
+    val c = project.canvas
+    val (frameW, frameH) = shownFrame(project) ?: return
+    val rect = CropBox.shown(c)
+    Text(stringResource(R.string.crop_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        CropRatio.entries.forEach { r ->
+            FilterChip(
+                selected = ratio == r,
+                onClick = {
+                    onRatio(r)
+                    r.normalized(frameW.toFloat() / frameH)?.let { k ->
+                        vm.edit { p -> p.copy(canvas = p.canvas.copy(crop = CropBox.insets(CropBox.fitRatio(CropBox.shown(p.canvas), k), p.canvas))) }
+                    }
+                },
+                label = { Text(cropRatioLabel(r)) },
+            )
+        }
+    }
+    Text(
+        stringResource(R.string.crop_size, (rect.width * frameW).roundToInt(), (rect.height * frameH).roundToInt()),
+        style = MaterialTheme.typography.bodyMedium,
+    )
+    if (c.aspect != AspectPreset.ORIGINAL) {
+        Text(
+            stringResource(R.string.crop_canvas_shape_hint, aspectLabel(c.aspect)),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        TextButton(onClick = { vm.edit { it.copy(canvas = it.canvas.copy(aspect = AspectPreset.ORIGINAL)) } }) {
+            Text(stringResource(R.string.crop_use_its_shape))
+        }
+    }
     if (!c.crop.isNone) {
         TextButton(onClick = { vm.edit { it.copy(canvas = it.canvas.copy(crop = CropInsets())) } }) { Text(stringResource(R.string.reset_crop)) }
     }
 }
 
 @Composable
-private fun CropSlider(label: String, value: Float, onDone: () -> Unit, onChange: (Float) -> Unit) {
-    Labeled(label, "${(value * 100).toInt()}%") {
-        Slider(value = value, onValueChange = onChange, onValueChangeFinished = onDone, valueRange = 0f..CropInsets.MAX)
-    }
+private fun cropRatioLabel(r: CropRatio) = when (r) {
+    CropRatio.FREE -> stringResource(R.string.crop_free)
+    CropRatio.ORIGINAL -> stringResource(R.string.aspect_original)
+    CropRatio.SQUARE -> "1:1"
+    CropRatio.PORTRAIT -> "4:5"
+    CropRatio.TALL -> "9:16"
+    CropRatio.WIDE -> "16:9"
+    CropRatio.CLASSIC -> "4:3"
+    CropRatio.CLASSIC_TALL -> "3:4"
 }
 
 @Composable
@@ -351,6 +436,19 @@ fun AdjustPanel(vm: EditorViewModel, project: Project) {
     TextButton(onClick = { vm.edit { it.copy(look = it.look.copy(brightness = 0f, contrast = 0f, saturation = 0f)) } }) {
         Text(stringResource(R.string.reset))
     }
+    val defaults = RecorderApp.instance.settings.musicLinks
+    if (defaults.isNotEmpty() || project.musicLinks.isNotEmpty()) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            TextButton(enabled = defaults.isNotEmpty(), onClick = { vm.edit { it.copy(musicLinks = defaults) } }) {
+                Text(stringResource(R.string.music_links_apply))
+            }
+            if (project.musicLinks.isNotEmpty()) {
+                TextButton(onClick = { vm.edit { it.copy(musicLinks = emptyList()) } }) {
+                    Text(stringResource(R.string.music_links_clear))
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -358,6 +456,121 @@ private fun AdjustSlider(label: String, value: Float, onDone: () -> Unit, onChan
     Labeled(label, "%+d".format((value * 100).toInt())) {
         Slider(value = value, onValueChange = onChange, onValueChangeFinished = onDone, valueRange = -1f..1f)
     }
+}
+
+/** Film grain over the whole picture; see Grain for what each control does. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun GrainPanel(vm: EditorViewModel, project: Project) {
+    val l = project.look
+    val d = l.grainDetail
+    val solo by vm.grainSolo.collectAsStateWithLifecycle()
+    fun detail(change: (GrainDetail) -> GrainDetail) = vm.preview { it.copy(look = it.look.copy(grainDetail = change(it.look.grainDetail))) }
+    fun pct(v: Float) = "${(v * 100).roundToInt()}%"
+
+    Text(stringResource(R.string.grain_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        GrainPreset.entries.forEach { p ->
+            FilterChip(
+                selected = p.matches(l),
+                onClick = { vm.edit { it.copy(look = p.applyTo(it.look)) } },
+                label = { Text(stringResource(grainPresetLabel(p))) },
+            )
+        }
+    }
+    GrainSlider(stringResource(R.string.grain_amount), l.grain, if (l.grain <= 0f) stringResource(R.string.grain_off) else pct(l.grain), vm::commit) { v ->
+        vm.preview { it.copy(look = it.look.copy(grain = v)) }
+    }
+
+    GrainSection(R.string.grain_character)
+    GrainSlider(stringResource(R.string.grain_size), l.grainSize, stringResource(grainSizeLabel(l.grainSize)), vm::commit) { v ->
+        vm.preview { it.copy(look = it.look.copy(grainSize = v)) }
+    }
+    GrainSlider(stringResource(R.string.grain_sharpness), d.sharpness, pct(d.sharpness), vm::commit) { v -> detail { it.copy(sharpness = v) } }
+    GrainSlider(stringResource(R.string.grain_texture), d.texture, pct(d.texture), vm::commit) { v -> detail { it.copy(texture = v) } }
+
+    GrainSection(R.string.grain_tone)
+    GrainSlider(stringResource(R.string.grain_shadows), d.shadows, pct(d.shadows), vm::commit) { v -> detail { it.copy(shadows = v) } }
+    GrainSlider(stringResource(R.string.grain_midtones), d.midtones, pct(d.midtones), vm::commit) { v -> detail { it.copy(midtones = v) } }
+    GrainSlider(stringResource(R.string.grain_highlights), d.highlights, pct(d.highlights), vm::commit) { v -> detail { it.copy(highlights = v) } }
+
+    GrainSection(R.string.grain_colour_section)
+    GrainSlider(stringResource(R.string.grain_colour), d.colour, if (d.colour <= 0f) stringResource(R.string.grain_mono) else pct(d.colour), vm::commit) { v ->
+        detail { it.copy(colour = v) }
+    }
+    val channels = 0f..Grain.MAX_CHANNEL
+    GrainSlider(stringResource(R.string.grain_red), d.red, "×%.2f".format(d.red), vm::commit, channels) { v -> detail { it.copy(red = v) } }
+    GrainSlider(stringResource(R.string.grain_green), d.green, "×%.2f".format(d.green), vm::commit, channels) { v -> detail { it.copy(green = v) } }
+    GrainSlider(stringResource(R.string.grain_blue), d.blue, "×%.2f".format(d.blue), vm::commit, channels) { v -> detail { it.copy(blue = v) } }
+
+    GrainSection(R.string.grain_motion)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        GrainMotion.entries.forEach { m ->
+            FilterChip(
+                selected = d.motion == m,
+                onClick = { vm.edit { it.copy(look = it.look.copy(grainDetail = it.look.grainDetail.copy(motion = m))) } },
+                label = { Text(grainMotionLabel(m)) },
+            )
+        }
+    }
+
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(stringResource(R.string.grain_solo), style = MaterialTheme.typography.labelLarge)
+            Text(stringResource(R.string.grain_solo_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(checked = solo, onCheckedChange = vm::setGrainSolo, enabled = l.grain > 0f)
+    }
+    if (l.grain > 0f || l.grainSize != VideoLook.DEFAULT_GRAIN_SIZE || d != GrainDetail()) {
+        TextButton(onClick = { vm.edit { it.copy(look = it.look.copy(grain = 0f, grainSize = VideoLook.DEFAULT_GRAIN_SIZE, grainDetail = GrainDetail())) } }) {
+            Text(stringResource(R.string.reset))
+        }
+    }
+}
+
+@Composable
+private fun GrainSection(title: Int) {
+    Text(stringResource(title), style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
+}
+
+@Composable
+private fun GrainSlider(
+    label: String,
+    value: Float,
+    shown: String,
+    onDone: () -> Unit,
+    range: ClosedFloatingPointRange<Float> = 0f..1f,
+    onChange: (Float) -> Unit,
+) {
+    Labeled(label, shown) {
+        Slider(value = value.coerceIn(range), onValueChange = onChange, onValueChangeFinished = onDone, valueRange = range)
+    }
+}
+
+private fun grainSizeLabel(size: Float) = when {
+    size < 1f / 3 -> R.string.grain_fine
+    size < 2f / 3 -> R.string.grain_medium
+    else -> R.string.grain_coarse
+}
+
+private fun grainPresetLabel(p: GrainPreset) = when (p) {
+    GrainPreset.FINE -> R.string.grain_fine
+    GrainPreset.MM35 -> R.string.grain_preset_35
+    GrainPreset.MM16 -> R.string.grain_preset_16
+    GrainPreset.SUPER8 -> R.string.grain_preset_super8
+    GrainPreset.MONO -> R.string.grain_mono
+}
+
+@Composable
+private fun grainMotionLabel(m: GrainMotion): String = when (m) {
+    GrainMotion.EVERY_FRAME -> stringResource(R.string.grain_motion_every)
+    GrainMotion.STILL -> stringResource(R.string.grain_motion_still)
+    GrainMotion.FILM_24, GrainMotion.FILM_12 -> stringResource(R.string.fps, m.fps ?: 0)
 }
 
 @Composable
@@ -385,7 +598,27 @@ fun VideoFadesPanel(vm: EditorViewModel, project: Project) {
 
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
-fun ExportPanel(settings: ExportSettings, onChange: (ExportSettings) -> Unit, onExport: () -> Unit) {
+fun ExportPanel(
+    settings: ExportSettings,
+    onChange: (ExportSettings) -> Unit,
+    pendingExports: Int,
+    bundleBusy: Boolean,
+    saveBundle: () -> Unit,
+    resumeExport: () -> Unit,
+    discardExport: () -> Unit,
+    onExport: (Boolean) -> Unit,
+) {
+    if (pendingExports > 0) {
+        Text(stringResource(R.string.pro_export_queue_count, pendingExports))
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            OutlinedButton(onClick = resumeExport) { Text(stringResource(R.string.pro_export_resume)) }
+            TextButton(onClick = discardExport) { Text(stringResource(R.string.pro_export_discard)) }
+        }
+    }
+    OutlinedButton(onClick = saveBundle, enabled = !bundleBusy, modifier = Modifier.fillMaxWidth()) {
+        Text(stringResource(if (bundleBusy) R.string.pro_bundle_saving else R.string.pro_bundle_save))
+    }
+    Text(stringResource(R.string.pro_bundle_originals), style = MaterialTheme.typography.bodySmall)
     Text(stringResource(R.string.export_what), style = MaterialTheme.typography.labelLarge)
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         ExportMode.entries.forEach { m ->
@@ -393,7 +626,35 @@ fun ExportPanel(settings: ExportSettings, onChange: (ExportSettings) -> Unit, on
         }
     }
     Text(stringResource(exportModeHint(settings.mode)), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    if (settings.mode != ExportMode.AUDIO_ONLY) {
+    if (settings.mode == ExportMode.GIF) {
+        Text(stringResource(R.string.export_gif_size), style = MaterialTheme.typography.labelLarge)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            GifSize.entries.forEach { g ->
+                FilterChip(selected = settings.gifSize == g, onClick = { onChange(settings.copy(gifSize = g)) }, label = { Text("${g.shortSide}p") })
+            }
+        }
+        Text(stringResource(R.string.export_gif_frame_rate), style = MaterialTheme.typography.labelLarge)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            GifFrameRate.entries.forEach { f ->
+                FilterChip(
+                    selected = settings.gifFrameRate == f,
+                    onClick = { onChange(settings.copy(gifFrameRate = f)) },
+                    label = { Text(stringResource(R.string.fps, f.fps)) },
+                )
+            }
+        }
+    } else if (settings.mode.picture) {
+        Text(stringResource(R.string.pro_delivery_aspect), style = MaterialTheme.typography.labelLarge)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FilterChip(settings.aspectOverride == null, { onChange(settings.copy(aspectOverride = null)) },
+                { Text(stringResource(R.string.pro_project_aspect)) })
+            listOf(AspectPreset.WIDE, AspectPreset.TALL, AspectPreset.SQUARE).forEach { aspect ->
+                FilterChip(settings.aspectOverride == aspect, { onChange(settings.copy(aspectOverride = aspect)) },
+                    { Text(aspectLabel(aspect)) })
+            }
+        }
+        FilterChip(settings.burnCaptions, { onChange(settings.copy(burnCaptions = !settings.burnCaptions)) },
+            { Text(stringResource(R.string.pro_burn_captions)) })
         Text(stringResource(R.string.export_resolution), style = MaterialTheme.typography.labelLarge)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             ExportResolution.entries.forEach { r ->
@@ -411,19 +672,28 @@ fun ExportPanel(settings: ExportSettings, onChange: (ExportSettings) -> Unit, on
             }
         }
     }
-    Button(onClick = onExport, modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) { Text(stringResource(R.string.action_export)) }
+    Button(onClick = { onExport(false) }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+        Text(stringResource(R.string.action_export))
+    }
+    if (settings.mode == ExportMode.VIDEO || settings.mode == ExportMode.VIDEO_ONLY) {
+        OutlinedButton(onClick = { onExport(true) }, modifier = Modifier.fillMaxWidth()) {
+            Text(stringResource(R.string.pro_export_both))
+        }
+    }
 }
 
 private fun exportModeLabel(m: ExportMode) = when (m) {
     ExportMode.VIDEO -> R.string.export_mode_video
     ExportMode.VIDEO_ONLY -> R.string.export_mode_video_only
     ExportMode.AUDIO_ONLY -> R.string.export_mode_audio_only
+    ExportMode.GIF -> R.string.export_mode_gif
 }
 
 private fun exportModeHint(m: ExportMode) = when (m) {
     ExportMode.VIDEO -> R.string.export_mode_video_hint
     ExportMode.VIDEO_ONLY -> R.string.export_mode_video_only_hint
     ExportMode.AUDIO_ONLY -> R.string.export_mode_audio_only_hint
+    ExportMode.GIF -> R.string.export_mode_gif_hint
 }
 
 private fun exportQualityLabel(q: ExportQuality) = when (q) {

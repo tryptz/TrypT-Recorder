@@ -2,12 +2,15 @@
 
 package tf.monochrome.recorder.editor.export
 
+import android.graphics.Bitmap
 import android.graphics.Color
+import android.opengl.Matrix
 import android.text.SpannableString
 import android.text.Spanned
 import android.text.style.BackgroundColorSpan
 import android.text.style.ForegroundColorSpan
 import androidx.annotation.OptIn
+import androidx.core.graphics.createBitmap
 import androidx.media3.common.C
 import androidx.media3.common.OverlaySettings
 import androidx.media3.common.audio.AudioProcessor.AudioFormat
@@ -16,11 +19,17 @@ import androidx.media3.common.audio.AudioProcessor.UnhandledAudioFormatException
 import androidx.media3.common.audio.BaseAudioProcessor
 import androidx.media3.common.audio.SpeedProvider
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.common.util.Size
+import androidx.media3.effect.BitmapOverlay
+import androidx.media3.effect.GlMatrixTransformation
 import androidx.media3.effect.RgbMatrix
 import androidx.media3.effect.StaticOverlaySettings
 import androidx.media3.effect.TextOverlay
+import tf.monochrome.recorder.editor.model.CropRect
+import tf.monochrome.recorder.editor.model.ClipTiming
 import tf.monochrome.recorder.editor.model.TextPosition
 import java.nio.ByteBuffer
+import kotlin.math.pow
 
 /*
  * The handful of effects Media3 does not ship in the shape the editor needs.
@@ -65,6 +74,15 @@ class ColorMatrix(private val matrix: FloatArray) : RgbMatrix {
         )
         val WARM = diagonal(1.08f, 1.0f, 0.86f)
         val COOL = diagonal(0.88f, 1.0f, 1.10f)
+
+        fun whiteBalance(temperature: Float, exposure: Float, tint: Float): ColorMatrix {
+            val gain = 2f.pow(exposure)
+            return diagonal(
+                gain * (1f + 0.16f * temperature + 0.08f * tint),
+                gain * (1f - 0.16f * tint),
+                gain * (1f - 0.16f * temperature + 0.08f * tint),
+            )
+        }
 
         private fun diagonal(r: Float, g: Float, b: Float) = ColorMatrix(
             floatArrayOf(
@@ -131,34 +149,58 @@ class VolumeEnvelope(
     private val fadeInUs: Long,
     private val fadeOutUs: Long,
     private val durationUs: Long,
+    private val balance: Float = 0f,
 ) : BaseAudioProcessor() {
     private var framesSeen = 0L
 
-    private val isIdentity: Boolean get() = gain == 1f && fadeInUs <= 0 && fadeOutUs <= 0
+    private val isIdentity: Boolean get() = gain == 1f && balance == 0f && fadeInUs <= 0 && fadeOutUs <= 0
 
     override fun onConfigure(inputAudioFormat: AudioFormat): AudioFormat {
         if (inputAudioFormat.encoding != C.ENCODING_PCM_16BIT && inputAudioFormat.encoding != C.ENCODING_PCM_FLOAT) {
             throw UnhandledAudioFormatException(inputAudioFormat)
         }
         // NOT_SET marks the processor inactive: unity gain, no fades, no work.
-        return if (isIdentity) AudioFormat.NOT_SET else inputAudioFormat
+        return when {
+            isIdentity -> AudioFormat.NOT_SET
+            balance != 0f && inputAudioFormat.channelCount == 1 ->
+                AudioFormat(inputAudioFormat.sampleRate, 2, inputAudioFormat.encoding)
+            else -> inputAudioFormat
+        }
     }
 
     override fun queueInput(inputBuffer: ByteBuffer) {
         val remaining = inputBuffer.remaining()
         if (remaining == 0) return
         val format = inputAudioFormat
-        val out = replaceOutputBuffer(remaining)
+        val duplicateMono = format.channelCount == 1 && balance != 0f
+        val out = replaceOutputBuffer(if (duplicateMono) remaining * 2 else remaining)
+        val left = 1f - balance.coerceAtLeast(0f)
+        val right = 1f + balance.coerceAtMost(0f)
         val channels = format.channelCount
         val rate = format.sampleRate
         while (inputBuffer.remaining() >= format.bytesPerFrame) {
             val posUs = framesSeen * 1_000_000L / rate
             val g = gain * ExportPlanner.fadeGain(posUs, durationUs, fadeInUs, fadeOutUs)
-            repeat(channels) {
+            if (duplicateMono) {
                 if (format.encoding == C.ENCODING_PCM_16BIT) {
-                    out.putShort(ExportPlanner.scaleSample(inputBuffer.getShort(), g))
+                    val sample = inputBuffer.getShort()
+                    out.putShort(ExportPlanner.scaleSample(sample, g * left))
+                    out.putShort(ExportPlanner.scaleSample(sample, g * right))
                 } else {
-                    out.putFloat((inputBuffer.getFloat() * g).coerceIn(-1f, 1f))
+                    val sample = inputBuffer.getFloat()
+                    out.putFloat((sample * g * left).coerceIn(-1f, 1f))
+                    out.putFloat((sample * g * right).coerceIn(-1f, 1f))
+                }
+            } else repeat(channels) { channel ->
+                val channelGain = g * when {
+                    channels != 2 -> 1f
+                    channel == 0 -> left
+                    else -> right
+                }
+                if (format.encoding == C.ENCODING_PCM_16BIT) {
+                    out.putShort(ExportPlanner.scaleSample(inputBuffer.getShort(), channelGain))
+                } else {
+                    out.putFloat((inputBuffer.getFloat() * channelGain).coerceIn(-1f, 1f))
                 }
             }
             framesSeen++
@@ -181,4 +223,57 @@ class VolumeEnvelope(
 data class ConstantSpeed(private val speed: Float) : SpeedProvider {
     override fun getSpeed(timeUs: Long): Float = speed
     override fun getNextSpeedChangeTimeUs(timeUs: Long): Long = C.TIME_UNSET
+}
+
+/** Media3 requests times relative to the start of the clipped item. */
+class RampSpeed(private val timing: ClipTiming, private val startUs: Long) : SpeedProvider {
+    override fun getSpeed(timeUs: Long): Float = timing.rateAt(startUs + timeUs)
+
+    override fun getNextSpeedChangeTimeUs(timeUs: Long): Long =
+        timing.nextChangeAfter(startUs + timeUs)?.minus(startUs) ?: C.TIME_UNSET
+}
+
+/** The keys are anchored to source time so a split retains the shot's motion. */
+class ClipMotion(private val clip: PlannedMedia) : GlMatrixTransformation {
+    private var aspect = 1f
+    private val matrix = FloatArray(16)
+
+    override fun configure(inputWidth: Int, inputHeight: Int): Size {
+        aspect = inputWidth.toFloat() / inputHeight
+        return Size(inputWidth, inputHeight)
+    }
+
+    override fun getGlMatrixArray(presentationTimeUs: Long): FloatArray {
+        val local = (presentationTimeUs - clip.timelineStartUs).coerceIn(0, clip.durationUs)
+        val source = clip.timing.sourceAt(local)
+        val transform = clip.picture.at(source)
+        Matrix.setIdentityM(matrix, 0)
+        Matrix.translateM(matrix, 0, transform.x, transform.y, 0f)
+        Matrix.scaleM(matrix, 0, 1f / aspect, 1f, 1f)
+        Matrix.rotateM(matrix, 0, -transform.rotation, 0f, 0f, 1f)
+        Matrix.scaleM(matrix, 0, aspect * transform.zoom, transform.zoom, 1f)
+        return matrix
+    }
+}
+
+/** An opaque texture placed in either source or canvas coordinates by the effect order. */
+class SolidCover(private val boxAt: (Long) -> CropRect) : BitmapOverlay() {
+    private val pixel = createBitmap(1, 1).apply { eraseColor(Color.BLACK) }
+    private lateinit var frameSize: Size
+
+    override fun configure(videoSize: Size) {
+        frameSize = videoSize
+    }
+
+    override fun getBitmap(presentationTimeUs: Long): Bitmap = pixel
+
+    override fun getOverlaySettings(presentationTimeUs: Long): OverlaySettings {
+        val box = boxAt(presentationTimeUs)
+        return StaticOverlaySettings.Builder()
+            .setScale(box.width * frameSize.width, box.height * frameSize.height)
+            .setBackgroundFrameAnchor(
+                (box.left + box.right - 1f).coerceIn(-1f, 1f),
+                (1f - box.top - box.bottom).coerceIn(-1f, 1f),
+            ).build()
+    }
 }

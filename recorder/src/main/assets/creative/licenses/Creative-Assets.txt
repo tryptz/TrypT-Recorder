@@ -1,0 +1,17 @@
+Striped Purple color-grading LUTs
+https://github.com/stripedpurple/color-grading-luts
+Revision 9757e8b5147693cab49c3fd674bf23dbe28d6c8e
+MIT. Copyright notices from the upstream .cube files are retained.
+Four looks were resampled to a 17-point 3D cube.
+See Striped-Purple-MIT.txt.
+
+FilmSim by Sébastien Guyader
+https://github.com/sguyader/FilmSim
+Revision 1453b2b55c48d99a889b1e455f91f6898ba2db41
+CC0 1.0 Universal. The four Hald images were converted to 17-point .cube LUTs.
+See FilmSim-CC0.txt.
+
+Music Loop Variations by obscure music
+https://opengameart.org/content/music-loop-variations
+CC0 1.0 Universal. The six original WAV loops were transcoded to AAC/M4A.
+See FilmSim-CC0.txt for the text of the same CC0 dedication.

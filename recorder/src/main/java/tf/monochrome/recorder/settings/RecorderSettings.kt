@@ -40,6 +40,7 @@ data class RecorderSettings(
     val floatingButton: Boolean = false,
     /** Take the floating button off screen while recording so it is not in the video. */
     val hideButtonWhileRecording: Boolean = false,
+    val editReady: Boolean = false,
 ) {
     companion object {
         val FRAME_RATES = listOf(24, 30, 60, 90, 120, 144, 165)

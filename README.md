@@ -28,11 +28,20 @@ Android 10 or newer.
   duplicate, reorder.
 - **Detach audio**: a clip's sound becomes its own piece on an audio track, to
   move, trim, split, fade or delete independently; *Restore audio* puts it back.
-- Export as video, **video without sound**, or **sound only** (M4A) — plus a
+- Export as video, **video without sound**, **sound only** (M4A), or a
+  looping **GIF** (320–640p, 10–25 fps, with every edit in it) — plus a
   one-tap *Extract audio* in the library.
-- Music tracks, titles, aspect ratio, crop, rotate, flip, filters, brightness,
+- **Crop by touch**: drag the corners, edges or the whole box on the picture,
+  any size and shape, or held to 1:1, 4:5, 9:16, 16:9, 4:3 or 3:4.
+- **Film grain** with professional controls: film-format presets, amount,
+  size, sharpness, texture, shadow/midtone/highlight response, colour grain
+  and per-channel strength, grain motion (every frame, 24/12 fps, still), and
+  a grain-only view.
+- Music tracks, titles, aspect ratio, rotate, flip, filters, brightness,
   contrast, saturation, fades. Undo/redo; drafts save themselves.
-- The preview plays exactly what the export will render.
+- **Mixer** with Dialogue, Device, Music, SFX and Master buses, live peak
+  meters and 36 native Tryptify effects with editable FX chains. Mixer settings
+  apply to preview and export.
 
 ## Build
 
@@ -41,7 +50,8 @@ Android 10 or newer.
 ./gradlew :recorder:assembleRelease
 ```
 
-Needs the Android SDK (platform 36, build-tools 36.0.0) and JDK 17+.
+Needs the Android SDK (platform 36, build-tools 36.0.0), NDK 28.2.13676358,
+CMake 3.22.1 and JDK 17+.
 Release signing reads `recorder/keystore.properties`, which is never committed;
 see `recorder/keystore.properties.example`.
 

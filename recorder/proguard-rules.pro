@@ -15,3 +15,7 @@
 -keepclasseswithmembers class tf.monochrome.recorder.** {
     kotlinx.serialization.KSerializer serializer(...);
 }
+
+-keepclasseswithmembernames class tf.monochrome.recorder.editor.export.NativeRecorderMixer {
+    native <methods>;
+}

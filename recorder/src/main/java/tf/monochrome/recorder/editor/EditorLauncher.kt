@@ -4,6 +4,15 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.MediaStore
+import androidx.core.net.toUri
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import tf.monochrome.recorder.R
+import tf.monochrome.recorder.capture.EditReadySession
+import tf.monochrome.recorder.editor.model.AudioClip
+import tf.monochrome.recorder.editor.model.AudioRole
+import tf.monochrome.recorder.editor.model.EditMarker
+import tf.monochrome.recorder.editor.model.MediaRef
 import tf.monochrome.recorder.RecorderApp
 import tf.monochrome.recorder.editor.export.ExportManager
 import tf.monochrome.recorder.editor.export.ExportMode
@@ -28,7 +37,45 @@ object EditorLauncher {
         }.filter { it.hasVideo }
         if (refs.isEmpty()) return null
         val name = refs.first().displayName.substringBeforeLast('.')
-        return RecorderApp.instance.projects.create(name, refs).id
+        val now = System.currentTimeMillis()
+        val draft = Project(
+            id = newId(), name = name, createdAt = now, updatedAt = now,
+            musicLinks = RecorderApp.instance.settings.musicLinks,
+        ).addClips(refs)
+        val restored = withContext(Dispatchers.IO) {
+            var positionUs = 0L
+            val audio = mutableListOf<AudioClip>()
+            val markers = mutableListOf<EditMarker>()
+            val clips = draft.clips.map { clip ->
+                val position = positionUs
+                positionUs += clip.durationUs
+                val manifest = EditReadySession.load(context, clip.source.uri) ?: return@map clip
+                markers += manifest.markerTimesUs.filter { it in 0 until clip.durationUs }
+                    .map { EditMarker(newId(), position + it) }
+                if (!manifest.isolatedAudioComplete || manifest.stems.isEmpty()) return@map clip
+                val stems = manifest.stems.mapNotNull { stem ->
+                    val file = EditReadySession.stemFile(context, clip.source.uri, stem.role)
+                    if (file.length() <= 44) return@mapNotNull null
+                    val start = stem.startUs.coerceAtLeast(0)
+                    val trim = (-stem.startUs).coerceAtLeast(0)
+                    val duration = minOf(stem.durationUs - trim, clip.durationUs - start)
+                    if (duration <= 0) return@mapNotNull null
+                    val label = context.getString(if (stem.role == AudioRole.DIALOGUE) R.string.pro_dialogue else R.string.pro_device)
+                    AudioClip(
+                        id = newId(), source = MediaRef(file.toUri().toString(), label, stem.durationUs,
+                            hasVideo = false, hasAudio = true),
+                        trimStartUs = trim, trimEndUs = trim + duration, startUs = position + start,
+                        role = stem.role,
+                    )
+                }
+                if (stems.size != manifest.stems.size) return@map clip
+                audio += stems
+                clip.copy(volume = 0f)
+            }
+            draft.copy(clips = clips, audio = audio, markers = markers)
+        }
+        RecorderApp.instance.projects.save(restored)
+        return restored.id
     }
 
     /**

@@ -1,0 +1,18 @@
+cmake_minimum_required(VERSION 3.22.1)
+project(recorder_dsp LANGUAGES CXX)
+
+set(TAC_BUILD_USB OFF CACHE BOOL "" FORCE)
+add_subdirectory(tryptify-audio-core)
+
+if(ANDROID)
+    add_library(recorder_dsp SHARED mixer_jni.cpp)
+    target_compile_options(recorder_dsp PRIVATE -Wall -Wextra -fvisibility=hidden)
+    target_link_libraries(recorder_dsp PRIVATE tac_dsp)
+else()
+    enable_testing()
+    add_executable(recorder_mixer_test tests/recorder_mixer_test.cpp)
+    target_include_directories(recorder_mixer_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_options(recorder_mixer_test PRIVATE -UNDEBUG)
+    target_link_libraries(recorder_mixer_test PRIVATE tac_dsp)
+    add_test(NAME recorder_mixer COMMAND recorder_mixer_test)
+endif()

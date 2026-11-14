@@ -38,9 +38,15 @@ data class VideoClip(
     val volume: Float = 1f,
     /** The sound has been split off onto an audio lane; this clip plays silent. */
     val audioDetached: Boolean = false,
+    val picture: ClipPicture = ClipPicture(),
+    val speedKeys: List<SpeedKey> = emptyList(),
+    val angles: List<CameraAngle> = emptyList(),
+    val angleId: String? = null,
+    val role: AudioRole = AudioRole.DEVICE,
 ) {
     val sourceSpanUs: Long get() = trimEndUs - trimStartUs
-    val durationUs: Long get() = (sourceSpanUs / speed).toLong()
+    val timing by lazy(LazyThreadSafetyMode.PUBLICATION) { ClipTiming(trimStartUs, trimEndUs, speed, speedKeys) }
+    val durationUs: Long get() = timing.durationUs
 
     /** Whether this clip puts its own sound on the main track. */
     val contributesAudio: Boolean get() = source.hasAudio && !audioDetached && volume > 0f
@@ -69,10 +75,14 @@ data class AudioClip(
     val kind: AudioKind = AudioKind.MUSIC,
     /** For [AudioKind.DETACHED]: the clip it came from, so it can be put back. */
     val linkedClipId: String? = null,
+    val speedKeys: List<SpeedKey> = emptyList(),
+    val role: AudioRole? = null,
 ) {
     val sourceSpanUs: Long get() = trimEndUs - trimStartUs
-    val durationUs: Long get() = (sourceSpanUs / speed).toLong()
+    val timing by lazy(LazyThreadSafetyMode.PUBLICATION) { ClipTiming(trimStartUs, trimEndUs, speed, speedKeys) }
+    val durationUs: Long get() = timing.durationUs
     val endUs: Long get() = startUs + durationUs
+    val audioRole: AudioRole get() = role ?: if (kind == AudioKind.MUSIC) AudioRole.MUSIC else AudioRole.DEVICE
 }
 
 enum class TextPosition { TOP, CENTER, BOTTOM }
@@ -93,6 +103,7 @@ data class TextItem(
     val color: Long = 0xFFFFFFFF,
     /** A dark box behind the text, for legibility over busy footage. */
     val background: Boolean = true,
+    val caption: Boolean = false,
 )
 
 enum class Filter { NONE, MONO, SEPIA, VIVID, COOL, WARM, INVERT }
@@ -111,6 +122,52 @@ data class VideoLook(
     val fadeInUs: Long = 0,
     /** Fade out to black at the end. */
     val fadeOutUs: Long = 0,
+    /** Film grain, 0 = none .. 1 = heavy. */
+    val grain: Float = 0f,
+    /** 0 = finest .. 1 = coarsest grain. */
+    val grainSize: Float = DEFAULT_GRAIN_SIZE,
+    /** The rest of the grain's character. */
+    val grainDetail: GrainDetail = GrainDetail(),
+) {
+    companion object {
+        /** "Fine": grains of about 1.5 px on a 1080-pixel short side. */
+        const val DEFAULT_GRAIN_SIZE = 0.15f
+    }
+}
+
+/** How often the grain's pattern changes. */
+enum class GrainMotion(val fps: Int?) {
+    /** A new pattern every video frame. */
+    EVERY_FRAME(null),
+    /** New 24 times a second, as on cinema film, whatever the video's own rate. */
+    FILM_24(24),
+    FILM_12(12),
+    /** One pattern throughout, like dust on a lens. */
+    STILL(0),
+}
+
+/**
+ * Film grain's finer controls. Amount and size came first and stay in
+ * [VideoLook] as `grain` and `grainSize`, so drafts from before keep their
+ * grain. The defaults reproduce that first grain exactly.
+ */
+@Serializable
+data class GrainDetail(
+    /** 0 = soft-edged grains .. 1 = crisp, well-defined ones. */
+    val sharpness: Float = 0f,
+    /** A second layer of half-size grain: 0 = smooth clumps .. 1 = gritty. */
+    val texture: Float = 0.5f,
+    /** 0 = monochrome .. 1 = every colour channel its own grain. */
+    val colour: Float = 0f,
+    /** How strongly grain shows in shadows, midtones and highlights, 0..1. */
+    val shadows: Float = 0.2f,
+    val midtones: Float = 1f,
+    val highlights: Float = 0.2f,
+    /** Grain strength per channel, 0..2. In film the blue layer is usually the grainiest. */
+    val red: Float = 1f,
+    val green: Float = 1f,
+    val blue: Float = 1f,
+    val motion: GrainMotion = GrainMotion.EVERY_FRAME,
 )
 
 enum class AspectPreset(val ratio: Float?) {
@@ -133,8 +190,8 @@ data class CropInsets(
     val isNone: Boolean get() = left == 0f && top == 0f && right == 0f && bottom == 0f
 
     companion object {
-        /** Each edge at most this much, so at least 10% of either axis survives. */
-        const val MAX = 0.45f
+        /** At least this much of either side survives a crop; any size and shape above it. */
+        const val MIN_KEEP = 0.05f
     }
 }
 
@@ -162,4 +219,9 @@ data class Project(
     val texts: List<TextItem> = emptyList(),
     val look: VideoLook = VideoLook(),
     val canvas: CanvasSettings = CanvasSettings(),
+    val overlays: List<OverlayClip> = emptyList(),
+    val markers: List<EditMarker> = emptyList(),
+    val mixer: Mixer = Mixer(),
+    val frameRate: TimelineRate = TimelineRate.FPS_60,
+    val musicLinks: List<VisualLink> = emptyList(),
 )

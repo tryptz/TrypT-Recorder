@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
@@ -62,6 +63,7 @@ import tf.monochrome.recorder.editor.model.TextItem
 import tf.monochrome.recorder.editor.model.VideoClip
 import tf.monochrome.recorder.editor.model.assignLanes
 import tf.monochrome.recorder.editor.model.durationUs
+import tf.monochrome.recorder.editor.export.ExportPlanner
 import tf.monochrome.recorder.media.Thumbnails
 import tf.monochrome.recorder.ui.DetachedTeal
 import tf.monochrome.recorder.ui.MusicViolet
@@ -93,6 +95,7 @@ fun Timeline(
     pixelsPerSecond: Dp,
     onScrub: (Long) -> Unit,
     onSelect: (Selection) -> Unit,
+    onDragOverlay: (id: String, startUs: Long) -> Unit,
     onDragAudio: (id: String, startUs: Long) -> Unit,
     onDragText: (id: String, startUs: Long) -> Unit,
     onDragEnd: () -> Unit,
@@ -142,10 +145,35 @@ fun Timeline(
                 Modifier
                     .width(usToDp(totalUs))
                     .fillMaxHeight()
+                    .verticalScroll(rememberScrollState())
                     .clickable(interactionSource = noRipple, indication = null) { onSelect(Selection.None) },
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Ruler(totalUs, pxPerSec)
+                Box {
+                    Ruler(totalUs, pxPerSec)
+                    project.markers.filter { it.timeUs in 0..totalUs }.forEach { marker ->
+                        Box(Modifier.offset(x = usToDp(marker.timeUs)).width(3.dp).height(15.dp).background(TextAmber))
+                    }
+                }
+                ExportPlanner.visibleOverlays(project.overlays, totalUs)
+                    .groupBy { it.layer }.toSortedMap(reverseOrder()).values.forEach { lane ->
+                    Box(Modifier.fillMaxWidth().height(AudioLaneHeight)) {
+                        lane.forEach { overlay ->
+                            FreeBlock(
+                                x = usToDp(overlay.startUs),
+                                width = usToDp(overlay.durationUs),
+                                startUs = overlay.startUs,
+                                color = Color(0xFF558CF2),
+                                label = overlay.source.displayName,
+                                selected = selection == Selection.Overlay(overlay.id),
+                                pxPerUs = pxPerUs,
+                                onClick = { onSelect(Selection.Overlay(overlay.id)) },
+                                onDrag = { start -> onDragOverlay(overlay.id, start) },
+                                onDragEnd = onDragEnd,
+                            )
+                        }
+                    }
+                }
                 Row(Modifier.height(VideoLaneHeight)) {
                     project.clips.forEach { clip ->
                         ClipBlock(

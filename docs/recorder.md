@@ -9,14 +9,14 @@ repository; this repository is its standalone home.
 ## Build and test
 
 ```
-./gradlew :recorder:testDebugUnitTest    # 80 JVM tests, no device
+./gradlew :recorder:testDebugUnitTest    # 149 JVM tests, no device
 ./gradlew :recorder:lintDebug            # clean: 0 errors, 0 warnings
 ./gradlew :recorder:assembleDebug        # signed with the committed recorder/debug.keystore
 ./gradlew :recorder:assembleRelease      # R8-minified, ~4 MB
 ```
 
-No native code and no submodules: it assembles from a bare clone with the
-Android SDK installed.
+The audio mixer builds with Android NDK 28.2.13676358 and CMake 3.22.1.
+The pinned DSP source is included, so a checkout needs no submodule setup.
 
 ### Release signing
 
@@ -89,13 +89,31 @@ the rate while moving (`FrameTiming`) beside the file's average.
   picture; *Restore audio* puts it back. Export as *Video, no sound* (silent
   MP4) or *Sound only* (M4A in `Music/TryptifyRecorder`); the library also has a
   one-tap *Extract audio*.
-- Music and other audio files on lanes; overlapping pieces mix.
+- **GIF export**: the edited picture as a looping animated GIF in
+  `Pictures/TryptifyRecorder` — 320p, 480p or 640p on the short side (never
+  above the source's), 10, 15, 20 or 25 fps. Every edit is in it: cuts, speed,
+  canvas, look, titles, fades.
+- Music and other audio files on lanes. Assign clips to Dialogue, Device,
+  Music or SFX, then open **Mixer** to set faders, pan, mute, solo and FX.
+  Each role and Master has a reorderable chain with per-effect parameters,
+  bypass and wet mix. Projects save these controls with their undo history.
 - Titles: text, position, size, colour, background box, start/end on the
   timeline.
-- Canvas: aspect (original, 16:9, 9:16, 1:1, 4:5, 4:3), fit or fill, rotate,
-  flip, crop.
+- **Crop by touch**: while the Crop tool is open the preview shows the whole
+  picture with a box over it — drag a corner or edge to resize, the inside to
+  move. Any size down to 5 % of either side and any shape, or held to
+  original, 1:1, 4:5, 9:16, 16:9, 4:3 or 3:4. With the canvas shape on
+  *Original* the export takes the crop's own shape.
+- Canvas: shape (original, 16:9, 9:16, 1:1, 4:5, 4:3), fit or fill, rotate,
+  flip.
 - Look: filters (mono, sepia, vivid, cool, warm, invert), brightness, contrast,
   saturation, fade in from / out to black.
+- **Film grain**: presets (Fine, 35 mm, 16 mm, Super 8, Mono), then amount;
+  character (size, sharpness, texture); tone (how much shows in shadows,
+  midtones and highlights); colour (monochrome to per-channel grain, and
+  red, green and blue strength); motion (every frame, 24 or 12 fps, still);
+  and *Show grain only* to judge it on grey in the preview. The same in
+  preview and export.
 - Undo/redo (a slider drag is one step), drafts autosaved as JSON.
 - Export resolution (original, 1080p, 720p, 480p) and quality.
 
@@ -110,6 +128,8 @@ recorder/src/main/java/tf/monochrome/recorder/
   editor/    model/  Project, Timeline ops, History      — pure, JVM-tested
              export/ ExportPlanner (pure) → CompositionFactory (Media3),
                      Effects, ExportManager
+                     gif/ FrameSampler, YuvFrame, GifPalette, GifEncoder
+                          (pure) ← GifTranscoder (MediaCodec)
              ui/     EditorViewModel, EditorScreen, TimelineView, ToolPanels
              store/  ProjectStore (drafts)
   media/     MediaStoreFile, MediaProbe, Thumbnails, RecordingsRepository
@@ -119,7 +139,8 @@ recorder/src/main/java/tf/monochrome/recorder/
 
 The rule that keeps it testable without a phone: decisions live in pure Kotlin
 (`CapturePlanner`, `PauseClock`, `Pcm`, `Timeline`, `History`,
-`ExportPlanner`), and the Android/Media3 layers only carry them out.
+`ExportPlanner`, `CropBox`, `Grain`, and for GIFs `FrameSampler`, `YuvFrame`,
+`GifPalette`, `GifEncoder`), and the Android/Media3 layers only carry them out.
 
 ### Why things are the way they are
 
@@ -168,14 +189,133 @@ The rule that keeps it testable without a phone: decisions live in pure Kotlin
   the oldest samples on overrun, so latency cannot creep.
 - **Volume above 100 %** uses `VolumeEnvelope`, not Media3's `GainProcessor`,
   which is specified for [0, 1] and wraps 16-bit samples above that.
+- **The crop is stored in the source's orientation, dragged in the
+  picture's.** `CropInsets` are cut from the source before it is turned or
+  mirrored, because that is where Media3's Crop runs. The box the user drags
+  is over the picture as it comes out, so `CropBox` maps between the two:
+  mirror first, then turn — the order Media3's ScaleAndRotateTransformation
+  uses (post-scale, then post-rotate). While the tool is open the preview is
+  planned without the crop and in the picture's own shape, so the box sits
+  exactly over the frame and dragging it never rebuilds the player. Drags are
+  measured from where they began, so a handle held at the picture's edge
+  stays under the finger when it comes back; each drag is one undo step.
+- **Film grain is a shader of its own** (`FilmGrain`, a Media3 `GlEffect`),
+  since Media3 has none. What makes it look like film rather than noise:
+  luminance only by default, so no colour speckle; close to Gaussian (four
+  hashes summed); strongest in the midtones and a fifth as strong at black
+  and white (`Grain.response`); two layers, the finer one at half size, for
+  clumps with texture. The detail controls (`GrainDetail`, `GrainPreset`)
+  default to exactly that first grain — checked pixel for pixel against the
+  1.4.0 shader on Mesa — so older drafts look the same. Tone is the same
+  quarter-circle curve through three points (black, grey, white). Colour
+  blends a field per channel into the shared one, scaled to keep its
+  strength. **Sharpness** raises each noise value to a power below 1
+  (keeping its sign, normalised by the exact E|n|^2p so strength holds):
+  edges between light and dark grains steepen while grains stay round.
+  Sharpening the grid's interpolation was tried first and turned coarse
+  grains into squares. Motion seeds from the time rounded to 1/24 or 1/12 s,
+  or from nothing. The texture and colour layers cost nothing at zero. The noise grid is read with smooth interpolation and rescaled
+  to the same strength everywhere, because plain interpolation is weaker
+  between grid points and shows as a mesh. The hash avoids `sin`, which loses
+  precision on mobile GPUs. Grain is added to gamma-encoded values: that is
+  what Media3 hands SDR effects (its builder starts at
+  `WORKING_COLOR_SPACE_DEFAULT`, whatever the javadoc says); HDR frames come
+  linear and are encoded around the grain. It sits after colour and before
+  fades and titles, so a fade ends on clean black and titles stay crisp.
+  Size is relative to the frame, so the 720p preview matches the export, and
+  grains smaller than a pixel fade in proportion — a pixel averages them — so
+  a small GIF is not grainier than its video. Each frame's grain is seeded
+  from its composition time: fresh every frame, identical in preview and
+  export. The shader source was run on Mesa (llvmpipe) to check its strength,
+  midtone response, evenness and frame-to-frame independence.
 - **Time-based effects** (fades, titles) use composition time. Both
   `CompositionPlayer` and `Transformer` hand per-item effects composition-time
   timestamps (checked in the 1.10.1 sources: `VideoEncoderGraphInput` adds each
   item's offset), so a title lands at the same moment in preview and export.
+- **A GIF is made in two steps.** Transformer renders the project as a silent
+  MP4 at the GIF's size and high quality — the same Composition as every
+  other export, so every edit is in it — and `GifTranscoder` decodes that
+  with MediaCodec and writes the GIF in Kotlin (`GifEncoder`, no library).
+  Three things in the decoded video are not what they seem: Transformer
+  encodes a portrait picture lying on its side with a rotation flag, which
+  a GIF cannot carry, so frames are turned upright while converting; the
+  decoder's crop may include padding, so the track's size wins; and colours
+  are BT.709 limited range unless the file says otherwise.
+- **GIF frames follow the video's own timing.** A GIF has a fixed frame rate,
+  a screen recording does not. GIF frame k shows the latest video frame at or
+  before k / fps — never the nearest, which would show a change early — and
+  frames are held until the next one's time is known, so only the ones that
+  are shown get converted (`FrameSampler`). Delays are rounded on the running
+  total, so 15 fps comes out 7, 7, 6 hundredths and the GIF lasts exactly as
+  long as the video. Media3's `FrameDropEffect` would have saved rendering
+  work, but it drops each clip's last frame — on a still screen that frame
+  can be on screen for seconds.
+- **One palette for the whole GIF**, from a first decoding pass over up to 120
+  frames: median cut over a 32-level-per-channel histogram that also keeps
+  each cell's exact mean, so a flat colour (an app bar, a dark background)
+  comes back exact. Per-frame palettes would flicker.
+- **Dither only where needed, and by position.** A pixel within a few levels
+  of a palette colour takes it plainly, so flat UI stays clean; the rest get
+  an 8×8 Bayer dither. Ordered rather than error diffusion because its
+  pattern depends only on the pixel's position: an unchanged area comes out
+  the same every frame, so it neither shimmers nor costs bytes.
+- **Each GIF frame sends only what changed**: pixels that would come out as
+  the colour already shown are transparent, the frame is cut to the box
+  around the rest, and a frame with no change just lengthens the one before.
+  Only an exact match counts: letting near matches stand saved 12 % on a test
+  clip, but drew contours across a slowly changing gradient. The encoder was
+  checked against Pillow, ImageMagick and ffmpeg, which decode its files
+  identically.
 - **Media3 1.10.1** (catalog key `media3Editor`): the editor needs track-typed
   sequences, gaps and `CompositionPlayer`, none of which older releases have.
   Not 1.11.x: it pulls kotlin-stdlib 2.2.10, newer than this build's Kotlin
   2.1.0 can read. `CompositionPlayer` is `@ExperimentalApi`.
+
+### Editor audio routing
+
+The editor resamples decoded clips to 48 kHz. Each source carries its stereo
+signal in the pair of channels reserved for its role. Media3 aligns the sources
+and sums them in floating point. Native inserts process each summed role before
+its fader and pan. The role outputs sum into Master, which has its own inserts,
+pan and fader. Stereo peak meters read the actual post-fader samples. The mixer
+hands the final stereo PCM to both preview and export.
+
+Media3 1.10.1 gap items cannot carry audio processors, so routed audio uses a
+seekable sparse PCM file for silence. The same stereo pair mapping works when
+audio begins after a gap, when a video clip is muted and when a video overlay
+generates silence during preview.
+
+The native build links `tac_dsp` from `tryptify-audio-core` revision
+`09b3956d699b41125fd213562459477f9d8b6ce9` with the USB driver disabled.
+The upstream license is in
+`recorder/src/main/cpp/tryptify-audio-core/LICENSE`. The JNI adapter calls the
+upstream snap-in factory directly because the original player's engine feeds one
+shared stereo input to every bus. Effects run within the project duration.
+Preview seeks start each chain with fresh effect state.
+
+### Creative assets and Music Links
+
+Choose **LUT Library** in a clip's grade panel to use a bundled look or open a
+local 3D .cube. The eight looks come from Striped Purple and FilmSim and are
+stored as 17-point cubes. **Add audio** opens the Music Library, where six CC0
+loops and downloaded tracks are available alongside the document picker.
+Settings accepts direct HTTPS audio-file links and keeps successfully imported
+audio in app storage for offline use and draft reopening. Provenance, source
+revisions and license texts ship under `assets/creative/licenses`.
+
+The FX chain uses the Tryptify rotary controls, graph math, graph handles and
+preset values from revision `67a7f67c160de2e6b5fc1b9b41bb8c20b4a30eaa`.
+Recorder retains its own bus routing and draft format. Oversampling runs inside
+each native effect at the selected 1×, 2× or 4× factor.
+
+**Settings → Music Links** provides the Tryptify band follower, feel, direction,
+curve, smoothing and optional formula for four Recorder grading controls.
+A version-1 Tryptify Music Links preset opens a mapping dialog so a source link
+can be assigned to a Recorder control and edited before saving. Settings links
+are copied into new projects. Use **Adjust → Apply Settings links** to copy them
+into a draft. Preview and picture exports analyze the processed Master signal
+and use the resulting values by timeline timestamp. That first pass adds time
+when the audio or links change, and the app reuses recent analyses in memory.
 
 ## Not verified on a device yet
 
@@ -200,6 +340,18 @@ emulator, so none of it has run on a phone. Before a release, check at least:
 - [ ] Editor preview plays, seeks and updates for every tool; export in all
       three modes; detached audio lines up after export.
 - [ ] Titles and fades appear at the same times in preview and export.
+- [ ] Film grain: fine and natural at 1:1 on the phone, the same in preview
+      and export, moving every frame; no mesh or banding at coarse size.
+      Each preset and control changes the preview; *Show grain only* never
+      reaches an export; 24 fps motion holds the grain across frames of a
+      60 fps recording; a long 1080p export with colour grain still runs.
+- [ ] Crop tool: the box sits exactly over the picture; corners, edges and
+      the inside each grab and follow the finger; a held shape stays held;
+      the export matches the box — also after Rotate and Flip.
+- [ ] GIF export of a portrait recording comes out upright, in
+      `Pictures/TryptifyRecorder`, loops, and plays at the chosen rate in a
+      browser and a chat app; cancel mid-way leaves no file; a still stretch
+      stays a single long frame.
 - [ ] Drafts reopen after the app is killed (persisted document permissions).
 
 Known limits: exports run in-app (the screen is kept on while one runs) rather

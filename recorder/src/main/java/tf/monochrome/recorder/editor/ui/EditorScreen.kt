@@ -35,13 +35,23 @@ import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentCut
+import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Gradient
+import androidx.compose.material.icons.filled.Grain
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.PictureInPictureAlt
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.Animation
+import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.Subtitles
+import androidx.compose.material.icons.filled.VideoCameraFront
 import androidx.compose.material.icons.filled.SettingsEthernet
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Title
@@ -96,6 +106,13 @@ import tf.monochrome.recorder.editor.export.ExportSettings
 import tf.monochrome.recorder.editor.export.ExportState
 import tf.monochrome.recorder.editor.export.PlanResult
 import tf.monochrome.recorder.editor.model.AudioKind
+import tf.monochrome.recorder.editor.model.CropBox
+import tf.monochrome.recorder.editor.model.VideoClip
+import tf.monochrome.recorder.editor.model.sourceAt
+import tf.monochrome.recorder.editor.model.snapToMarker
+import tf.monochrome.recorder.editor.model.CropRect
+import tf.monochrome.recorder.editor.model.clipStartUs
+import tf.monochrome.recorder.editor.model.updateClipPicture
 import tf.monochrome.recorder.editor.model.MediaRef
 import tf.monochrome.recorder.editor.model.Project
 import tf.monochrome.recorder.editor.model.assignLanes
@@ -107,6 +124,8 @@ import tf.monochrome.recorder.editor.model.duplicateClip
 import tf.monochrome.recorder.editor.model.durationUs
 import tf.monochrome.recorder.editor.model.moveAudio
 import tf.monochrome.recorder.editor.model.moveClip
+import tf.monochrome.recorder.editor.model.moveOverlay
+import tf.monochrome.recorder.editor.model.splitOverlay
 import tf.monochrome.recorder.editor.model.restoreAudio
 import tf.monochrome.recorder.editor.model.splitAt
 import tf.monochrome.recorder.editor.model.splitAudioAt
@@ -126,6 +145,8 @@ fun EditorScreen(projectId: String, onClose: () -> Unit) {
     val previewError by vm.previewError.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
     val exportState by ExportManager.state.collectAsStateWithLifecycle()
+    val bundleBusy by vm.bundleBusy.collectAsStateWithLifecycle()
+    val pendingExports by ExportManager.pendingCount.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
@@ -133,17 +154,49 @@ fun EditorScreen(projectId: String, onClose: () -> Unit) {
     var tool by rememberSaveable { mutableStateOf(Tool.NONE) }
     var zoom by rememberSaveable { mutableFloatStateOf(48f) }
     var exportSettings by remember { mutableStateOf(ExportSettings()) }
+    var cropRatio by rememberSaveable { mutableStateOf(CropRatio.FREE) }
     var renaming by remember { mutableStateOf(false) }
     var detailsOf by remember { mutableStateOf<MediaRef?>(null) }
+    var showMusicLibrary by rememberSaveable { mutableStateOf(false) }
+    var showLutLibrary by rememberSaveable { mutableStateOf<String?>(null) }
+    var lutTarget by rememberSaveable { mutableStateOf<String?>(null) }
+    var angleTarget by rememberSaveable { mutableStateOf<String?>(null) }
+    var tracking by remember { mutableStateOf<Pair<VideoClip, Long>?>(null) }
+
+    val bundleWriter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+        if (uri != null) scope.launch { vm.saveBundle(uri) }
+    }
+    val lutPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val id = lutTarget
+        if (uri != null && id != null) scope.launch { vm.importLut(id, uri) }
+    }
+    val anglePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val id = angleTarget
+        if (uri != null && id != null) scope.launch { vm.addAngle(id, uri) }
+    }
+    val captionPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) scope.launch { vm.importCaptions(uri) }
+    }
+    val captionWriter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/x-subrip")) { uri ->
+        if (uri != null) scope.launch { vm.exportCaptions(uri) }
+    }
 
     val clipPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) scope.launch { vm.addClips(uris) }
+    }
+    val overlayPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) scope.launch { vm.addPictureInPicture(uri) }
     }
     val audioPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) scope.launch { vm.addAudio(uri) }
     }
 
+    LaunchedEffect(Unit) { vm.refreshExportQueue() }
     LaunchedEffect(selection) { if (!tool.fits(selection)) tool = Tool.NONE }
+    LaunchedEffect(tool) {
+        vm.setCropEditing(tool == Tool.CROP)
+        if (tool != Tool.GRAIN) vm.setGrainSolo(false)
+    }
     LaunchedEffect(message) {
         message?.let {
             snackbar.showSnackbar(it)
@@ -168,7 +221,33 @@ fun EditorScreen(projectId: String, onClose: () -> Unit) {
         return
     }
     val project = h.present
+    tracking?.let { (clip, sourceUs) -> TrackingDialog(vm, clip, sourceUs) { tracking = null } }
+    if (tool == Tool.MIXER) {
+        MixerPanel(vm, project, playing, playhead, close = {
+            vm.commit()
+            tool = Tool.NONE
+        })
+    }
+    val selectedClip = (selection as? Selection.Clip)?.let { target -> project.clips.firstOrNull { it.id == target.id } }
 
+    if (showMusicLibrary) {
+        MusicLibrary(
+            close = { showMusicLibrary = false },
+            browseFiles = { showMusicLibrary = false; audioPicker.launch(arrayOf("audio/*")) },
+            use = { track -> showMusicLibrary = false; scope.launch { vm.addLibraryMusic(track) } },
+        )
+    }
+    showLutLibrary?.let { clipId ->
+        LutLibrary(
+            close = { showLutLibrary = null },
+            browseFiles = {
+                showLutLibrary = null
+                lutTarget = clipId
+                lutPicker.launch(arrayOf("*/*"))
+            },
+            use = { lut -> showLutLibrary = null; scope.launch { vm.applyLibraryLut(clipId, lut) } },
+        )
+    }
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
@@ -214,11 +293,38 @@ fun EditorScreen(projectId: String, onClose: () -> Unit) {
                         Button(onClick = { clipPicker.launch(arrayOf("video/*")) }) { Text(stringResource(R.string.action_add_clip)) }
                     }
                 } else {
-                    AndroidView(
-                        factory = { ctx -> SurfaceView(ctx).also(vm::attachSurface) },
-                        onRelease = vm::detachSurface,
-                        modifier = Modifier.aspectRatio(aspect.coerceIn(0.2f, 5f)),
-                    )
+                    Box(Modifier.aspectRatio(aspect.coerceIn(0.2f, 5f))) {
+                        AndroidView(
+                            factory = { ctx -> SurfaceView(ctx).also(vm::attachSurface) },
+                            onRelease = vm::detachSurface,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                        if (tool == Tool.COVER && selectedClip != null) {
+                            val start = project.clipStartUs(selectedClip.id)
+                            val cover = selectedClip.picture.cover
+                            if (cover != null && playhead in start until start + selectedClip.durationUs) {
+                                CropOverlay(
+                                    rect = cover,
+                                    ratio = null,
+                                    onChange = { rect ->
+                                        vm.preview { p -> p.updateClipPicture(selectedClip.id) { it.copy(cover = rect) } }
+                                    },
+                                    onDragEnd = vm::commit,
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            }
+                        }
+                        if (tool == Tool.CROP) {
+                            val frame = shownFrame(project)
+                            CropOverlay(
+                                rect = CropBox.shown(project.canvas),
+                                ratio = frame?.let { (w, h) -> cropRatio.normalized(w.toFloat() / h) },
+                                onChange = { r -> vm.preview { it.copy(canvas = it.canvas.copy(crop = CropBox.insets(r, it.canvas))) } },
+                                onDragEnd = vm::commit,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+                    }
                     previewError?.let {
                         Text(
                             stringResource(R.string.editor_preview_error, it),
@@ -247,12 +353,20 @@ fun EditorScreen(projectId: String, onClose: () -> Unit) {
                     style = MaterialTheme.typography.labelLarge,
                     modifier = Modifier.weight(1f),
                 )
+                IconButton(onClick = { vm.scrubTo(project.frameRate.step(playhead, forward = false)) }, enabled = playhead > 0) {
+                    Icon(Icons.Filled.SkipPrevious, stringResource(R.string.editor_step_back))
+                }
+                IconButton(onClick = { vm.scrubTo(project.frameRate.step(playhead, forward = true)) }, enabled = playhead < project.durationUs) {
+                    Icon(Icons.Filled.SkipNext, stringResource(R.string.editor_step_forward))
+                }
                 IconButton(onClick = { zoom = (zoom / 1.6f).coerceAtLeast(6f) }) { Icon(Icons.Filled.ZoomOut, stringResource(R.string.action_zoom_out)) }
                 IconButton(onClick = { zoom = (zoom * 1.6f).coerceAtMost(480f) }) { Icon(Icons.Filled.ZoomIn, stringResource(R.string.action_zoom_in)) }
             }
 
             val laneCount = remember(project.audio) { assignLanes(project.audio).size }
-            val timelineHeight = 18 + 4 + 56 + (if (project.texts.isNotEmpty()) 30 else 0) + laneCount * 38 + 8
+            val overlayCount = remember(project.overlays) { project.overlays.map { it.layer }.distinct().size }
+            val timelineHeight = 18 + 4 + 56 + (if (project.texts.isNotEmpty()) 30 else 0) + (laneCount + overlayCount) * 42 + 8
+            val snapToleranceUs = (8_000_000 / zoom).toLong().coerceAtMost(250_000)
             Timeline(
                 project = project,
                 playheadUs = playhead,
@@ -260,9 +374,11 @@ fun EditorScreen(projectId: String, onClose: () -> Unit) {
                 pixelsPerSecond = zoom.dp,
                 onScrub = vm::scrubTo,
                 onSelect = { vm.selection.value = it },
-                onDragAudio = { id, start -> vm.preview { it.moveAudio(id, start) } },
+                onDragOverlay = { id, start -> vm.preview { it.moveOverlay(id, it.snapToMarker(start, snapToleranceUs)) } },
+                onDragAudio = { id, start -> vm.preview { it.moveAudio(id, it.snapToMarker(start, snapToleranceUs)) } },
                 onDragText = { id, start ->
-                    vm.preview { p -> p.updateText(id) { t -> t.copy(startUs = start, endUs = start + (t.endUs - t.startUs)) } }
+                    vm.preview { p -> val snapped = p.snapToMarker(start, snapToleranceUs)
+                        p.updateText(id) { t -> t.copy(startUs = snapped, endUs = snapped + (t.endUs - t.startUs)) } }
                 },
                 onDragEnd = vm::commit,
                 modifier = Modifier
@@ -270,7 +386,7 @@ fun EditorScreen(projectId: String, onClose: () -> Unit) {
                     .height(timelineHeight.coerceAtMost(260).dp),
             )
 
-            if (tool == Tool.NONE) {
+            if (tool == Tool.NONE || tool == Tool.MIXER) {
                 ActionRow(
                     actions = actionsFor(
                         project = project,
@@ -279,7 +395,8 @@ fun EditorScreen(projectId: String, onClose: () -> Unit) {
                         vm = vm,
                         openTool = { tool = it },
                         addClip = { clipPicker.launch(arrayOf("video/*")) },
-                        addAudio = { audioPicker.launch(arrayOf("audio/*")) },
+                        addOverlay = { overlayPicker.launch(arrayOf("video/*")) },
+                        addAudio = { showMusicLibrary = true },
                         addTextLabel = stringResource(R.string.text_default),
                         showDetails = { detailsOf = it },
                     ),
@@ -291,14 +408,30 @@ fun EditorScreen(projectId: String, onClose: () -> Unit) {
                 }) {
                     ToolContent(
                         tool = tool,
+                        openTool = { tool = it },
                         vm = vm,
                         project = project,
                         selection = selection,
                         playheadUs = playhead,
                         exportSettings = exportSettings,
                         onExportSettings = { exportSettings = it },
-                        onExport = {
-                            when (vm.export(exportSettings)) {
+                        cropRatio = cropRatio,
+                        onCropRatio = { cropRatio = it },
+                        addLut = { showLutLibrary = it },
+                        addAngle = { id ->
+                            angleTarget = id
+                            anglePicker.launch(arrayOf("video/*"))
+                        },
+                        importCaptions = { captionPicker.launch(arrayOf("*/*")) },
+                        exportCaptions = { captionWriter.launch(project.name.replace('/', '_') + ".srt") },
+                        trackCover = { clip, sourceUs -> tracking = clip to sourceUs },
+                        pendingExports = pendingExports,
+                        bundleBusy = bundleBusy,
+                        saveBundle = { bundleWriter.launch(project.name.replace('/', '_') + "-project.zip") },
+                        resumeExport = { vm.resumeExport(); tool = Tool.NONE },
+                        discardExport = vm::discardQueuedExport,
+                        onExport = { bothAspects ->
+                            when (vm.export(exportSettings, bothAspects)) {
                                 null -> tool = Tool.NONE
                                 PlanResult.Reason.NO_CLIPS -> Toast.makeText(context, R.string.export_no_clips, Toast.LENGTH_SHORT).show()
                                 PlanResult.Reason.NO_AUDIO -> Toast.makeText(context, R.string.export_no_audio, Toast.LENGTH_SHORT).show()
@@ -351,18 +484,25 @@ private fun actionsFor(
     vm: EditorViewModel,
     openTool: (Tool) -> Unit,
     addClip: () -> Unit,
+    addOverlay: () -> Unit,
     addAudio: () -> Unit,
     addTextLabel: String,
     showDetails: (MediaRef) -> Unit,
 ): List<EditorAction> = when (selection) {
     Selection.None -> listOf(
         EditorAction(Icons.Filled.VideoLibrary, stringResource(R.string.action_add_clip), onClick = addClip),
+        EditorAction(Icons.Filled.PictureInPictureAlt, stringResource(R.string.editor_add_overlay), project.clips.isNotEmpty(), addOverlay),
+        EditorAction(Icons.Filled.Bookmark, stringResource(R.string.editor_markers), project.clips.isNotEmpty()) { openTool(Tool.MARKERS) },
         EditorAction(Icons.Filled.LibraryMusic, stringResource(R.string.action_add_audio), project.clips.isNotEmpty(), addAudio),
+        EditorAction(Icons.Filled.Tune, stringResource(R.string.pro_mixer), project.clips.isNotEmpty()) { openTool(Tool.MIXER) },
+        EditorAction(Icons.Filled.Subtitles, stringResource(R.string.pro_captions), project.clips.isNotEmpty()) { openTool(Tool.CAPTIONS) },
         EditorAction(Icons.Filled.Title, stringResource(R.string.action_add_text), project.clips.isNotEmpty()) { vm.addText(addTextLabel); openTool(Tool.TEXT) },
         EditorAction(Icons.Filled.ContentCut, stringResource(R.string.action_split), project.clips.isNotEmpty()) { vm.edit { it.splitAt(playheadUs) } },
+        EditorAction(Icons.Filled.Crop, stringResource(R.string.crop), project.clips.isNotEmpty()) { openTool(Tool.CROP) },
         EditorAction(Icons.Filled.AspectRatio, stringResource(R.string.tool_canvas)) { openTool(Tool.CANVAS) },
         EditorAction(Icons.Filled.AutoFixHigh, stringResource(R.string.tool_filters)) { openTool(Tool.FILTERS) },
         EditorAction(Icons.Filled.Tune, stringResource(R.string.tool_adjust)) { openTool(Tool.ADJUST) },
+        EditorAction(Icons.Filled.Grain, stringResource(R.string.tool_grain)) { openTool(Tool.GRAIN) },
         EditorAction(Icons.Filled.Gradient, stringResource(R.string.tool_fades)) { openTool(Tool.VIDEO_FADES) },
     )
     is Selection.Clip -> {
@@ -371,6 +511,15 @@ private fun actionsFor(
             EditorAction(Icons.Filled.ContentCut, stringResource(R.string.action_split)) { vm.edit { it.splitAt(playheadUs) } },
             EditorAction(Icons.Filled.Edit, stringResource(R.string.tool_trim)) { openTool(Tool.TRIM) },
             EditorAction(Icons.Filled.Speed, stringResource(R.string.tool_speed)) { openTool(Tool.SPEED) },
+            EditorAction(Icons.Filled.SettingsEthernet, stringResource(R.string.pro_precision)) { openTool(Tool.PRECISION) },
+            EditorAction(Icons.Filled.VideoCameraFront, stringResource(R.string.pro_angles)) { openTool(Tool.ANGLES) },
+            EditorAction(Icons.Filled.Animation, stringResource(R.string.editor_motion)) { openTool(Tool.MOTION) },
+            EditorAction(Icons.Filled.Tune, stringResource(R.string.editor_clip_grade)) { openTool(Tool.CLIP_GRADE) },
+            EditorAction(Icons.Filled.VisibilityOff, stringResource(R.string.editor_cover)) {
+                val start = project.clipStartUs(selection.id)
+                if (clip != null && playheadUs !in start until start + clip.durationUs) vm.scrubTo(start)
+                openTool(Tool.COVER)
+            },
             EditorAction(Icons.AutoMirrored.Filled.VolumeUp, stringResource(R.string.tool_volume), clip?.source?.hasAudio == true && clip.audioDetached.not()) { openTool(Tool.VOLUME) },
             if (clip?.audioDetached == true) {
                 EditorAction(Icons.AutoMirrored.Filled.CallMerge, stringResource(R.string.action_restore_audio)) { vm.edit { it.restoreAudio(selection.id) } }
@@ -386,6 +535,13 @@ private fun actionsFor(
             EditorAction(Icons.Filled.Delete, stringResource(R.string.action_delete)) { vm.edit { it.deleteClip(selection.id) } },
         )
     }
+    is Selection.Overlay -> listOf(
+        EditorAction(Icons.Filled.PictureInPictureAlt, stringResource(R.string.editor_overlay_settings)) { openTool(Tool.OVERLAY) },
+        EditorAction(Icons.Filled.ContentCut, stringResource(R.string.action_split)) { vm.edit { it.splitOverlay(selection.id, playheadUs) } },
+        EditorAction(Icons.Filled.Delete, stringResource(R.string.action_delete)) {
+            vm.edit { p -> p.copy(overlays = p.overlays.filterNot { it.id == selection.id }) }
+        },
+    )
     is Selection.Audio -> {
         val clip = project.audio.firstOrNull { it.id == selection.id }
         listOfNotNull(
@@ -462,13 +618,26 @@ private fun ToolSheet(title: String, onDone: () -> Unit, content: @Composable ()
 @Composable
 private fun ToolContent(
     tool: Tool,
+    openTool: (Tool) -> Unit,
     vm: EditorViewModel,
     project: Project,
     selection: Selection,
     playheadUs: Long,
     exportSettings: ExportSettings,
     onExportSettings: (ExportSettings) -> Unit,
-    onExport: () -> Unit,
+    cropRatio: CropRatio,
+    onCropRatio: (CropRatio) -> Unit,
+    addAngle: (String) -> Unit,
+    addLut: (String) -> Unit,
+    importCaptions: () -> Unit,
+    exportCaptions: () -> Unit,
+    trackCover: (VideoClip, Long) -> Unit,
+    pendingExports: Int,
+    bundleBusy: Boolean,
+    saveBundle: () -> Unit,
+    resumeExport: () -> Unit,
+    discardExport: () -> Unit,
+    onExport: (Boolean) -> Unit,
 ) {
     val clip = (selection as? Selection.Clip)?.let { s -> project.clips.firstOrNull { it.id == s.id } }
     val audio = (selection as? Selection.Audio)?.let { s -> project.audio.firstOrNull { it.id == s.id } }
@@ -479,33 +648,101 @@ private fun ToolContent(
             clip?.let { ClipTrimPanel(vm, it, playheadUs) }
             audio?.let { AudioTrimPanel(vm, it) }
         }
-        Tool.SPEED -> clip?.let { SpeedPanel(vm, it) }
+        Tool.SPEED -> clip?.let {
+            SpeedPanel(vm, it)
+            RampPanel(vm, project, it, playheadUs)
+        }
+        Tool.PRECISION -> clip?.let { PrecisionPanel(vm, project, it) }
+        Tool.ANGLES -> clip?.let { AnglesPanel(vm, it) { addAngle(it.id) } }
+        Tool.MIXER -> Unit // Full-screen panel over the attached editor preview.
+        Tool.CAPTIONS -> {
+            TextButton(onClick = importCaptions) { Text(stringResource(R.string.pro_import_srt)) }
+            TextButton(
+                enabled = project.texts.any { it.caption && it.startUs < project.durationUs },
+                onClick = exportCaptions,
+            ) { Text(stringResource(R.string.pro_export_srt)) }
+            val label = stringResource(R.string.pro_caption_default)
+            TextButton(onClick = { vm.addText(label, caption = true); openTool(Tool.TEXT) }) {
+                Text(stringResource(R.string.pro_add_caption))
+            }
+        }
+        Tool.MOTION -> clip?.let { ClipMotionPanel(vm, project, it, playheadUs) }
+        Tool.CLIP_GRADE -> clip?.let { ClipGradePanel(vm, it) { addLut(it.id) } }
+        Tool.COVER -> clip?.let { selected ->
+            val hasCover = selected.picture.cover != null
+            Text(stringResource(R.string.editor_cover_help))
+            TextButton(onClick = {
+                vm.edit { p ->
+                    p.updateClipPicture(selected.id) {
+                        it.copy(cover = if (hasCover) null else CropRect(0.2f, 0.2f, 0.8f, 0.4f))
+                    }
+                }
+            }) { Text(stringResource(if (hasCover) R.string.editor_remove_cover else R.string.editor_add_cover)) }
+            val start = project.clipStartUs(selected.id)
+            TextButton(enabled = selected.angleId == null, onClick = {
+                trackCover(selected, selected.sourceAt(playheadUs - start).coerceAtMost(selected.trimEndUs - 1))
+            }) { Text(stringResource(R.string.pro_track_region)) }
+            if (selected.picture.trackedCover != null) {
+                TextButton(onClick = { vm.edit { p -> p.updateClipPicture(selected.id) { it.copy(trackedCover = null) } } }) {
+                    Text(stringResource(R.string.pro_track_remove))
+                }
+            }
+        }
+        Tool.OVERLAY -> (selection as? Selection.Overlay)?.let { target ->
+            project.overlays.firstOrNull { it.id == target.id }?.let { OverlayPanel(vm, it) }
+        }
+        Tool.MARKERS -> MarkerPanel(vm, project, playheadUs)
         Tool.VOLUME -> {
-            clip?.let { ClipVolumePanel(vm, it) }
-            audio?.let { AudioVolumePanel(vm, it) }
+            clip?.let { c ->
+                ClipVolumePanel(vm, c)
+                RoleSelector(c.role) { role ->
+                    vm.edit { p -> p.copy(clips = p.clips.map { if (it.id == c.id) it.copy(role = role) else it }) }
+                }
+            }
+            audio?.let { a ->
+                AudioVolumePanel(vm, a)
+                RoleSelector(a.audioRole) { role ->
+                    vm.edit { p -> p.copy(audio = p.audio.map { if (it.id == a.id) it.copy(role = role) else it }) }
+                }
+            }
         }
         Tool.AUDIO_FADES -> audio?.let { AudioFadesPanel(vm, it) }
         Tool.AUDIO_POSITION -> audio?.let { AudioPositionPanel(vm, it, playheadUs) }
         Tool.TEXT -> text?.let { TextPanel(vm, it, playheadUs) }
+        Tool.CROP -> CropPanel(vm, project, cropRatio, onCropRatio)
         Tool.CANVAS -> CanvasPanel(vm, project)
         Tool.FILTERS -> FiltersPanel(vm, project)
         Tool.ADJUST -> AdjustPanel(vm, project)
+        Tool.GRAIN -> GrainPanel(vm, project)
         Tool.VIDEO_FADES -> VideoFadesPanel(vm, project)
-        Tool.EXPORT -> ExportPanel(exportSettings, onExportSettings, onExport)
+        Tool.EXPORT -> ExportPanel(
+            exportSettings, onExportSettings, pendingExports, bundleBusy, saveBundle, resumeExport, discardExport, onExport,
+        )
     }
 }
 
 private fun toolTitle(t: Tool) = when (t) {
     Tool.NONE -> R.string.app_name
     Tool.TRIM -> R.string.tool_trim
+    Tool.PRECISION -> R.string.pro_precision
+    Tool.ANGLES -> R.string.pro_angles
+    Tool.MIXER -> R.string.pro_mixer
+    Tool.CAPTIONS -> R.string.pro_captions
     Tool.SPEED -> R.string.tool_speed
     Tool.VOLUME -> R.string.tool_volume
     Tool.AUDIO_FADES -> R.string.tool_fades
     Tool.AUDIO_POSITION -> R.string.tool_position
     Tool.TEXT -> R.string.tool_text
+    Tool.CROP -> R.string.crop
     Tool.CANVAS -> R.string.tool_canvas
     Tool.FILTERS -> R.string.tool_filters
     Tool.ADJUST -> R.string.tool_adjust
+    Tool.GRAIN -> R.string.tool_grain
     Tool.VIDEO_FADES -> R.string.tool_fades
+    Tool.MOTION -> R.string.editor_motion
+    Tool.CLIP_GRADE -> R.string.editor_clip_grade
+    Tool.COVER -> R.string.editor_cover
+    Tool.OVERLAY -> R.string.editor_overlay_settings
+    Tool.MARKERS -> R.string.editor_markers
     Tool.EXPORT -> R.string.action_export
 }

@@ -59,8 +59,10 @@ simplified and cannot.
 
 All four are the gate for any change. Decisions live in pure Kotlin
 (`CapturePlanner`, `PauseClock`, `Pcm`, `AacPicker`, `FrameTiming`,
-`MediaDetails`, `Timeline`, `History`, `ExportPlanner`) precisely so the tests can hold them; when you change one of
-those rules, change its test, and never loosen a test to make it pass.
+`MediaDetails`, `Timeline`, `History`, `ExportPlanner`, `CropBox`, `Grain`,
+`FrameSampler`, `YuvFrame`, `GifPalette`, `GifEncoder`) precisely so the tests
+can hold them; when you change one of those rules, change its test, and never
+loosen a test to make it pass.
 
 Nothing here has an automated device test. Say plainly what was and was not
 run on a phone; `docs/recorder.md` has the device checklist.
@@ -75,7 +77,7 @@ mkdir -p $ANDROID_HOME/cmdline-tools && cd $ANDROID_HOME/cmdline-tools
 curl -sSo t.zip https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip
 unzip -q t.zip && mv cmdline-tools latest && cd -
 yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses
-$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools" "ndk;28.2.13676358" "cmake;3.22.1"
 echo "sdk.dir=$ANDROID_HOME" > local.properties   # gitignored
 ```
 
