@@ -116,5 +116,9 @@ dependencies {
     implementation(libs.media3.editor.common)
     implementation(libs.media3.editor.exoplayer)
 
+    // The liquid glass (ui/glass): the backdrop blur and the capture its live
+    // lens bends.
+    implementation(libs.haze)
+
     testImplementation(libs.junit)
 }

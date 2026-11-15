@@ -19,3 +19,10 @@
 -keepclasseswithmembernames class tf.monochrome.recorder.editor.export.NativeRecorderMixer {
     native <methods>;
 }
+
+# The liquid glass's live lens (ui/glass/LiveGlassLens.kt) reads Haze's
+# internal "source is recording" flag by name, so a lens inside its own source
+# skips it instead of looping (HazeContentDrawing). Same rule as Tryptify's.
+-keepclassmembers class dev.chrisbanes.haze.HazeArea {
+    boolean getContentDrawing$haze_release();
+}
