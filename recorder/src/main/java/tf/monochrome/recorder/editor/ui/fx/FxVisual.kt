@@ -18,6 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import tf.monochrome.recorder.ui.drawLabel
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -383,24 +384,20 @@ private fun DrawScope.drawFrequencyAxis(measurer: TextMeasurer, color: Color, s:
     for ((hz, label) in listOf(100f to "100", 1000f to "1k", 10000f to "10k")) {
         val x = M.freqToT(hz) * size.width
         drawLine(s.grid, Offset(x, 0f), Offset(x, size.height), strokeWidth = 1f)
-        drawText(measurer, label, Offset(x + 3.dp.toPx(), size.height - 12.dp.toPx()),
-            style = AXIS_LABEL.copy(color = color))
+        drawLabel(measurer, label, Offset(x + 3.dp.toPx(), size.height - 12.dp.toPx()), AXIS_LABEL.copy(color = color))
     }
     // The dashed 0 dB line through the middle.
-    drawText(measurer, "0 dB", Offset(3.dp.toPx(), size.height / 2f - 12.dp.toPx()),
-        style = AXIS_LABEL.copy(color = color))
+    drawLabel(measurer, "0 dB", Offset(3.dp.toPx(), size.height / 2f - 12.dp.toPx()), AXIS_LABEL.copy(color = color))
 }
 
 /** Input level marks along the bottom of a transfer graph. */
 private fun DrawScope.drawTransferAxis(measurer: TextMeasurer, color: Color, s: FxVisualStyle) {
     for (db in listOf(-48, -36, -24, -12)) {
         val x = (db + 60f) / 60f * size.width
-        drawText(measurer, "$db", Offset(x + 2.dp.toPx(), size.height - 12.dp.toPx()),
-            style = AXIS_LABEL.copy(color = color))
+        drawLabel(measurer, "$db", Offset(x + 2.dp.toPx(), size.height - 12.dp.toPx()), AXIS_LABEL.copy(color = color))
     }
-    drawText(measurer, "out", Offset(3.dp.toPx(), 2.dp.toPx()), style = AXIS_LABEL.copy(color = color))
-    drawText(measurer, "in dB", Offset(size.width - 26.dp.toPx(), size.height - 12.dp.toPx()),
-        style = AXIS_LABEL.copy(color = color))
+    drawLabel(measurer, "out", Offset(3.dp.toPx(), 2.dp.toPx()), AXIS_LABEL.copy(color = color))
+    drawLabel(measurer, "in dB", Offset(size.width - 26.dp.toPx(), size.height - 12.dp.toPx()), AXIS_LABEL.copy(color = color))
 }
 
 /** A draggable point: a ring with a lit core, and a halo while it is held. */

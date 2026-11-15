@@ -49,7 +49,6 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -68,6 +67,7 @@ import tf.monochrome.recorder.media.Thumbnails
 import tf.monochrome.recorder.ui.DetachedTeal
 import tf.monochrome.recorder.ui.MusicViolet
 import tf.monochrome.recorder.ui.TextAmber
+import tf.monochrome.recorder.ui.drawLabel
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.max
@@ -245,7 +245,7 @@ private fun Ruler(totalUs: Long, pxPerSec: Float) {
             val x = s * pxPerSec
             drawLine(labelColor, Offset(x, size.height * 0.55f), Offset(x, size.height), strokeWidth = 1.5f)
             val label = formatDuration((s * 1000).toLong())
-            drawText(measurer, label, Offset(x + 4f, 0f), style = androidx.compose.ui.text.TextStyle(color = labelColor, fontSize = 9.sp))
+            drawLabel(measurer, label, Offset(x + 4f, 0f), androidx.compose.ui.text.TextStyle(color = labelColor, fontSize = 9.sp))
             s += step
         }
     }
