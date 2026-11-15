@@ -9,7 +9,7 @@ repository; this repository is its standalone home.
 ## Build and test
 
 ```
-./gradlew :recorder:testDebugUnitTest    # 184 JVM tests, no device
+./gradlew :recorder:testDebugUnitTest    # 209 JVM tests, no device
 ./gradlew :recorder:lintDebug            # clean: 0 errors, 0 warnings
 ./gradlew :recorder:assembleDebug        # signed with the committed recorder/debug.keystore
 ./gradlew :recorder:assembleRelease      # R8-minified, ~10 MB
@@ -443,8 +443,28 @@ emulator, so none of it has run on a phone. Before a release, check at least:
 - [ ] Mixer effects: Resonator, Shaper (Mirror), Ladder (Sat off, high cutoff,
       resonance 100) never silence a bus or hang an export; Pitch Shifter up
       sounds higher; Reverser plays backwards; Tape Stop slows to a stop.
+- [ ] Look: the accent follows the wallpaper (Android 12+); the top bar,
+      export sheet, segmented control and dock are glass that bends and
+      frosts what is under it (Android 13+), a plain surface on 10–12;
+      every export setting still reachable (More); Save exports.
 - [ ] Crash report: after a crash (or a freeze), Settings shows *Last crash*
       and *Share report* sends it.
+
+**Look.** Material You: on Android 12+ the accent and its tones come from the
+wallpaper (`dynamicDarkColorScheme`), on a near-black ground kept for video;
+below 12 a fixed amber. Floating surfaces are Tryptify's liquid glass,
+ported as `ui/glass` (see its header for which files and what was left out):
+on Android 13+ an AGSL slab that builds bevel, refraction and rim from the
+pane's shape over a live lens or Haze frost of what is behind it, and a
+Material surface below 13 or wherever the shader will not compile. The
+editor follows the owner's reference layout: Cancel / format / Save across
+the top, the export sheet as a glass pane (stepped Resolution, Frame rate and
+Quality sliders with the estimated file size), the transport, a tool row, and
+a glass dock whose tabs (Edit, Audio, Text, Adjust, Filter, Frame) pick the
+tools. Glass panes are drawn *beside* the content they frost, never inside
+it; a pane inside its own backdrop paints a flat slab. Tool sheets sit in the
+page and are Material surfaces for that reason. Nothing of the glass has been
+seen on a phone yet; the shaders are byte-for-byte Tryptify's.
 
 **Crash reports.** `CrashLog` keeps the last crash in the app's private
 storage: a Kotlin crash with its stack trace as it happens, and a native crash

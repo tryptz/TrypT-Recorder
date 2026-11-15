@@ -6,59 +6,53 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.Redo
-import androidx.compose.material.icons.automirrored.filled.Undo
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.AspectRatio
-import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.automirrored.filled.CallMerge
 import androidx.compose.material.icons.automirrored.filled.CallSplit
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Animation
+import androidx.compose.material.icons.filled.AspectRatio
+import androidx.compose.material.icons.filled.AutoFixHigh
+import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DriveFileRenameOutline
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Gradient
 import androidx.compose.material.icons.filled.Grain
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LibraryMusic
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PictureInPictureAlt
-import androidx.compose.material.icons.filled.Bookmark
-import androidx.compose.material.icons.filled.Animation
-import androidx.compose.material.icons.filled.SkipPrevious
-import androidx.compose.material.icons.filled.SkipNext
-import androidx.compose.material.icons.filled.VisibilityOff
-import androidx.compose.material.icons.filled.Subtitles
-import androidx.compose.material.icons.filled.VideoCameraFront
 import androidx.compose.material.icons.filled.SettingsEthernet
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.filled.Title
 import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material.icons.filled.Upload
+import androidx.compose.material.icons.filled.VideoCameraFront
 import androidx.compose.material.icons.filled.VideoLibrary
-import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.material3.AlertDialog
@@ -69,30 +63,28 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.net.toUri
@@ -100,22 +92,18 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
 import tf.monochrome.recorder.R
-import tf.monochrome.recorder.capture.formatDuration
 import tf.monochrome.recorder.editor.export.ExportManager
 import tf.monochrome.recorder.editor.export.ExportSettings
 import tf.monochrome.recorder.editor.export.ExportState
 import tf.monochrome.recorder.editor.export.PlanResult
 import tf.monochrome.recorder.editor.model.AudioKind
 import tf.monochrome.recorder.editor.model.CropBox
-import tf.monochrome.recorder.editor.model.VideoClip
-import tf.monochrome.recorder.editor.model.sourceAt
-import tf.monochrome.recorder.editor.model.snapToMarker
 import tf.monochrome.recorder.editor.model.CropRect
-import tf.monochrome.recorder.editor.model.clipStartUs
-import tf.monochrome.recorder.editor.model.updateClipPicture
 import tf.monochrome.recorder.editor.model.MediaRef
 import tf.monochrome.recorder.editor.model.Project
+import tf.monochrome.recorder.editor.model.VideoClip
 import tf.monochrome.recorder.editor.model.assignLanes
+import tf.monochrome.recorder.editor.model.clipStartUs
 import tf.monochrome.recorder.editor.model.deleteAudio
 import tf.monochrome.recorder.editor.model.deleteClip
 import tf.monochrome.recorder.editor.model.deleteText
@@ -125,13 +113,19 @@ import tf.monochrome.recorder.editor.model.durationUs
 import tf.monochrome.recorder.editor.model.moveAudio
 import tf.monochrome.recorder.editor.model.moveClip
 import tf.monochrome.recorder.editor.model.moveOverlay
-import tf.monochrome.recorder.editor.model.splitOverlay
 import tf.monochrome.recorder.editor.model.restoreAudio
+import tf.monochrome.recorder.editor.model.snapToMarker
+import tf.monochrome.recorder.editor.model.sourceAt
 import tf.monochrome.recorder.editor.model.splitAt
 import tf.monochrome.recorder.editor.model.splitAudioAt
+import tf.monochrome.recorder.editor.model.splitOverlay
+import tf.monochrome.recorder.editor.model.updateClipPicture
 import tf.monochrome.recorder.editor.model.updateText
 import tf.monochrome.recorder.ui.ExportStatusDialog
 import tf.monochrome.recorder.ui.MediaDetailsDialog
+import tf.monochrome.recorder.ui.glass.LocalGlassBackdrop
+import tf.monochrome.recorder.ui.glass.glassBackdrop
+import tf.monochrome.recorder.ui.glass.rememberGlassBackdrop
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -154,6 +148,8 @@ fun EditorScreen(projectId: String, onClose: () -> Unit) {
     var tool by rememberSaveable { mutableStateOf(Tool.NONE) }
     var zoom by rememberSaveable { mutableFloatStateOf(48f) }
     var exportSettings by remember { mutableStateOf(ExportSettings()) }
+    var exportSheet by rememberSaveable { mutableStateOf(false) }
+    var dockTab by rememberSaveable { mutableStateOf(DockTab.EDIT) }
     var cropRatio by rememberSaveable { mutableStateOf(CropRatio.FREE) }
     var renaming by remember { mutableStateOf(false) }
     var detailsOf by remember { mutableStateOf<MediaRef?>(null) }
@@ -212,7 +208,11 @@ fun EditorScreen(projectId: String, onClose: () -> Unit) {
     }
 
     BackHandler {
-        if (tool != Tool.NONE) tool = Tool.NONE else onClose()
+        when {
+            exportSheet -> exportSheet = false
+            tool != Tool.NONE -> tool = Tool.NONE
+            else -> onClose()
+        }
     }
 
     val h = history
@@ -248,38 +248,37 @@ fun EditorScreen(projectId: String, onClose: () -> Unit) {
             use = { lut -> showLutLibrary = null; scope.launch { vm.applyLibraryLut(clipId, lut) } },
         )
     }
-    Scaffold(
-        snackbarHost = { SnackbarHost(snackbar) },
-        topBar = {
-            TopAppBar(
-                navigationIcon = {
-                    IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.action_back)) }
-                },
-                title = {
-                    Text(
-                        project.name,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.clickable { renaming = true },
-                    )
-                },
-                actions = {
-                    IconButton(onClick = vm::undo, enabled = h.canUndo) { Icon(Icons.AutoMirrored.Filled.Undo, stringResource(R.string.action_undo)) }
-                    IconButton(onClick = vm::redo, enabled = h.canRedo) { Icon(Icons.AutoMirrored.Filled.Redo, stringResource(R.string.action_redo)) }
-                    Button(
-                        onClick = { tool = Tool.EXPORT },
-                        enabled = project.clips.isNotEmpty(),
-                        modifier = Modifier.padding(end = 8.dp),
-                    ) { Text(stringResource(R.string.action_export)) }
-                },
-            )
-        },
-    ) { padding ->
+    val backdrop = rememberGlassBackdrop()
+    val saveExport: (Boolean) -> Unit = { bothAspects ->
+        when (vm.export(exportSettings, bothAspects)) {
+            null -> exportSheet = false
+            PlanResult.Reason.NO_CLIPS -> Toast.makeText(context, R.string.export_no_clips, Toast.LENGTH_SHORT).show()
+            PlanResult.Reason.NO_AUDIO -> Toast.makeText(context, R.string.export_no_audio, Toast.LENGTH_SHORT).show()
+        }
+    }
+    // The tab the dock lights: the one the selection belongs to, else the one last picked.
+    val activeTab = when (selection) {
+        is Selection.Clip, is Selection.Overlay -> DockTab.EDIT
+        is Selection.Audio -> DockTab.AUDIO
+        is Selection.Text -> DockTab.TEXT
+        Selection.None -> dockTab
+    }
+    CompositionLocalProvider(LocalGlassBackdrop provides backdrop) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background),
+    ) {
+        // Everything but the floating glass: the glass frosts and bends this,
+        // so the panes are drawn beside it, never inside it.
         Column(
             Modifier
-                .padding(padding)
-                .fillMaxSize(),
+                .fillMaxSize()
+                .glassBackdrop(backdrop)
+                .background(MaterialTheme.colorScheme.background)
+                .statusBarsPadding(),
         ) {
+            Spacer(Modifier.height(TOP_BAR_HEIGHT))
             Box(
                 Modifier
                     .weight(1f)
@@ -338,59 +337,26 @@ fun EditorScreen(projectId: String, onClose: () -> Unit) {
                 }
             }
 
-            // Transport: play, time, zoom.
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(onClick = vm::togglePlay, enabled = project.clips.isNotEmpty()) {
-                    Icon(if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, stringResource(if (playing) R.string.action_pause else R.string.action_play))
-                }
-                Text(
-                    "${formatDuration(playhead / 1000)} / ${formatDuration(project.durationUs / 1000)}",
-                    style = MaterialTheme.typography.labelLarge,
-                    modifier = Modifier.weight(1f),
-                )
-                IconButton(onClick = { vm.scrubTo(project.frameRate.step(playhead, forward = false)) }, enabled = playhead > 0) {
-                    Icon(Icons.Filled.SkipPrevious, stringResource(R.string.editor_step_back))
-                }
-                IconButton(onClick = { vm.scrubTo(project.frameRate.step(playhead, forward = true)) }, enabled = playhead < project.durationUs) {
-                    Icon(Icons.Filled.SkipNext, stringResource(R.string.editor_step_forward))
-                }
-                IconButton(onClick = { zoom = (zoom / 1.6f).coerceAtLeast(6f) }) { Icon(Icons.Filled.ZoomOut, stringResource(R.string.action_zoom_out)) }
-                IconButton(onClick = { zoom = (zoom * 1.6f).coerceAtMost(480f) }) { Icon(Icons.Filled.ZoomIn, stringResource(R.string.action_zoom_in)) }
-            }
-
-            val laneCount = remember(project.audio) { assignLanes(project.audio).size }
-            val overlayCount = remember(project.overlays) { project.overlays.map { it.layer }.distinct().size }
-            val timelineHeight = 18 + 4 + 56 + (if (project.texts.isNotEmpty()) 30 else 0) + (laneCount + overlayCount) * 42 + 8
-            val snapToleranceUs = (8_000_000 / zoom).toLong().coerceAtMost(250_000)
-            Timeline(
-                project = project,
+            Transport(
                 playheadUs = playhead,
-                selection = selection,
-                pixelsPerSecond = zoom.dp,
-                onScrub = vm::scrubTo,
-                onSelect = { vm.selection.value = it },
-                onDragOverlay = { id, start -> vm.preview { it.moveOverlay(id, it.snapToMarker(start, snapToleranceUs)) } },
-                onDragAudio = { id, start -> vm.preview { it.moveAudio(id, it.snapToMarker(start, snapToleranceUs)) } },
-                onDragText = { id, start ->
-                    vm.preview { p -> val snapped = p.snapToMarker(start, snapToleranceUs)
-                        p.updateText(id) { t -> t.copy(startUs = snapped, endUs = snapped + (t.endUs - t.startUs)) } }
-                },
-                onDragEnd = vm::commit,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(timelineHeight.coerceAtMost(260).dp),
+                durationUs = project.durationUs,
+                playing = playing,
+                canPlay = project.clips.isNotEmpty(),
+                canUndo = h.canUndo,
+                canRedo = h.canRedo,
+                onPlay = vm::togglePlay,
+                onStepBack = { vm.scrubTo(project.frameRate.step(playhead, forward = false)) },
+                onStepForward = { vm.scrubTo(project.frameRate.step(playhead, forward = true)) },
+                onUndo = vm::undo,
+                onRedo = vm::redo,
             )
 
             if (tool == Tool.NONE || tool == Tool.MIXER) {
-                ActionRow(
+                ToolRow(
                     actions = actionsFor(
                         project = project,
                         selection = selection,
+                        tab = activeTab,
                         playheadUs = playhead,
                         vm = vm,
                         openTool = { tool = it },
@@ -399,9 +365,53 @@ fun EditorScreen(projectId: String, onClose: () -> Unit) {
                         addAudio = { showMusicLibrary = true },
                         addTextLabel = stringResource(R.string.text_default),
                         showDetails = { detailsOf = it },
+                        rename = { renaming = true },
                     ),
                 )
-            } else {
+            }
+
+            val laneCount = remember(project.audio) { assignLanes(project.audio).size }
+            val overlayCount = remember(project.overlays) { project.overlays.map { it.layer }.distinct().size }
+            val timelineHeight = 18 + 4 + 56 + (if (project.texts.isNotEmpty()) 30 else 0) + (laneCount + overlayCount) * 42 + 8
+            val snapToleranceUs = (8_000_000 / zoom).toLong().coerceAtMost(250_000)
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(timelineHeight.coerceAtMost(260).dp),
+            ) {
+                Timeline(
+                    project = project,
+                    playheadUs = playhead,
+                    selection = selection,
+                    pixelsPerSecond = zoom.dp,
+                    onScrub = vm::scrubTo,
+                    onSelect = { vm.selection.value = it },
+                    onDragOverlay = { id, start -> vm.preview { it.moveOverlay(id, it.snapToMarker(start, snapToleranceUs)) } },
+                    onDragAudio = { id, start -> vm.preview { it.moveAudio(id, it.snapToMarker(start, snapToleranceUs)) } },
+                    onDragText = { id, start ->
+                        vm.preview { p -> val snapped = p.snapToMarker(start, snapToleranceUs)
+                            p.updateText(id) { t -> t.copy(startUs = snapped, endUs = snapped + (t.endUs - t.startUs)) } }
+                    },
+                    onDragEnd = vm::commit,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                Row(
+                    Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(end = 4.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.85f)),
+                ) {
+                    IconButton(onClick = { zoom = (zoom / 1.6f).coerceAtLeast(6f) }, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Filled.ZoomOut, stringResource(R.string.action_zoom_out), modifier = Modifier.size(18.dp))
+                    }
+                    IconButton(onClick = { zoom = (zoom * 1.6f).coerceAtMost(480f) }, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Filled.ZoomIn, stringResource(R.string.action_zoom_in), modifier = Modifier.size(18.dp))
+                    }
+                }
+            }
+
+            if (tool != Tool.NONE && tool != Tool.MIXER) {
                 ToolSheet(title = stringResource(toolTitle(tool)), onDone = {
                     vm.commit()
                     tool = Tool.NONE
@@ -430,17 +440,66 @@ fun EditorScreen(projectId: String, onClose: () -> Unit) {
                         saveBundle = { bundleWriter.launch(project.name.replace('/', '_') + "-project.zip") },
                         resumeExport = { vm.resumeExport(); tool = Tool.NONE },
                         discardExport = vm::discardQueuedExport,
-                        onExport = { bothAspects ->
-                            when (vm.export(exportSettings, bothAspects)) {
-                                null -> tool = Tool.NONE
-                                PlanResult.Reason.NO_CLIPS -> Toast.makeText(context, R.string.export_no_clips, Toast.LENGTH_SHORT).show()
-                                PlanResult.Reason.NO_AUDIO -> Toast.makeText(context, R.string.export_no_audio, Toast.LENGTH_SHORT).show()
-                            }
-                        },
+                        onExport = saveExport,
                     )
                 }
             }
+            // Room for the dock, which floats over the bottom of this.
+            if (tool == Tool.NONE || tool == Tool.MIXER) Spacer(Modifier.navigationBarsPadding().height(DOCK_ROOM))
+            else Spacer(Modifier.navigationBarsPadding())
         }
+
+        EditorTopBar(
+            format = exportFormatLabel(exportSettings),
+            sheetOpen = exportSheet,
+            canSave = project.clips.isNotEmpty() && exportState !is ExportState.Running,
+            onCancel = onClose,
+            onFormat = { exportSheet = !exportSheet },
+            onSave = { saveExport(false) },
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .statusBarsPadding()
+                .height(TOP_BAR_HEIGHT),
+        )
+        if (exportSheet) {
+            ExportSheet(
+                project = project,
+                settings = exportSettings,
+                onChange = { exportSettings = it },
+                pendingExports = pendingExports,
+                bundleBusy = bundleBusy,
+                saveBundle = { bundleWriter.launch(project.name.replace('/', '_') + "-project.zip") },
+                resumeExport = { exportSheet = false; vm.resumeExport() },
+                discardExport = vm::discardQueuedExport,
+                queueBothAspects = { saveExport(true) },
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .statusBarsPadding()
+                    .padding(top = TOP_BAR_HEIGHT + 8.dp, start = 16.dp, end = 16.dp),
+            )
+        }
+        if (tool == Tool.NONE || tool == Tool.MIXER) {
+            EditorDock(
+                selected = activeTab,
+                onSelect = { tab ->
+                    dockTab = tab
+                    vm.selection.value = Selection.None
+                },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(horizontal = 20.dp, vertical = 12.dp)
+                    .fillMaxWidth(),
+            )
+        }
+        SnackbarHost(
+            snackbar,
+            Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(bottom = DOCK_ROOM),
+        )
+    }
     }
 
     ExportStatusDialog(
@@ -474,12 +533,11 @@ fun EditorScreen(projectId: String, onClose: () -> Unit) {
     }
 }
 
-private data class EditorAction(val icon: ImageVector, val label: String, val enabled: Boolean = true, val onClick: () -> Unit)
-
 @Composable
 private fun actionsFor(
     project: Project,
     selection: Selection,
+    tab: DockTab,
     playheadUs: Long,
     vm: EditorViewModel,
     openTool: (Tool) -> Unit,
@@ -488,23 +546,38 @@ private fun actionsFor(
     addAudio: () -> Unit,
     addTextLabel: String,
     showDetails: (MediaRef) -> Unit,
+    rename: () -> Unit,
 ): List<EditorAction> = when (selection) {
-    Selection.None -> listOf(
-        EditorAction(Icons.Filled.VideoLibrary, stringResource(R.string.action_add_clip), onClick = addClip),
-        EditorAction(Icons.Filled.PictureInPictureAlt, stringResource(R.string.editor_add_overlay), project.clips.isNotEmpty(), addOverlay),
-        EditorAction(Icons.Filled.Bookmark, stringResource(R.string.editor_markers), project.clips.isNotEmpty()) { openTool(Tool.MARKERS) },
-        EditorAction(Icons.Filled.LibraryMusic, stringResource(R.string.action_add_audio), project.clips.isNotEmpty(), addAudio),
-        EditorAction(Icons.Filled.Tune, stringResource(R.string.pro_mixer), project.clips.isNotEmpty()) { openTool(Tool.MIXER) },
-        EditorAction(Icons.Filled.Subtitles, stringResource(R.string.pro_captions), project.clips.isNotEmpty()) { openTool(Tool.CAPTIONS) },
-        EditorAction(Icons.Filled.Title, stringResource(R.string.action_add_text), project.clips.isNotEmpty()) { vm.addText(addTextLabel); openTool(Tool.TEXT) },
-        EditorAction(Icons.Filled.ContentCut, stringResource(R.string.action_split), project.clips.isNotEmpty()) { vm.edit { it.splitAt(playheadUs) } },
-        EditorAction(Icons.Filled.Crop, stringResource(R.string.crop), project.clips.isNotEmpty()) { openTool(Tool.CROP) },
-        EditorAction(Icons.Filled.AspectRatio, stringResource(R.string.tool_canvas)) { openTool(Tool.CANVAS) },
-        EditorAction(Icons.Filled.AutoFixHigh, stringResource(R.string.tool_filters)) { openTool(Tool.FILTERS) },
-        EditorAction(Icons.Filled.Tune, stringResource(R.string.tool_adjust)) { openTool(Tool.ADJUST) },
-        EditorAction(Icons.Filled.Grain, stringResource(R.string.tool_grain)) { openTool(Tool.GRAIN) },
-        EditorAction(Icons.Filled.Gradient, stringResource(R.string.tool_fades)) { openTool(Tool.VIDEO_FADES) },
-    )
+    // Nothing selected: the tools of the dock's tab, for the whole project.
+    Selection.None -> when (tab) {
+        DockTab.EDIT -> listOf(
+            EditorAction(Icons.Filled.VideoLibrary, stringResource(R.string.action_add_clip), onClick = addClip),
+            EditorAction(Icons.Filled.ContentCut, stringResource(R.string.action_split), project.clips.isNotEmpty()) { vm.edit { it.splitAt(playheadUs) } },
+            EditorAction(Icons.Filled.PictureInPictureAlt, stringResource(R.string.editor_add_overlay), project.clips.isNotEmpty(), addOverlay),
+            EditorAction(Icons.Filled.Bookmark, stringResource(R.string.editor_markers), project.clips.isNotEmpty()) { openTool(Tool.MARKERS) },
+            EditorAction(Icons.Filled.DriveFileRenameOutline, stringResource(R.string.action_rename), onClick = rename),
+        )
+        DockTab.AUDIO -> listOf(
+            EditorAction(Icons.Filled.LibraryMusic, stringResource(R.string.action_add_audio), project.clips.isNotEmpty(), addAudio),
+            EditorAction(Icons.Filled.Tune, stringResource(R.string.pro_mixer), project.clips.isNotEmpty()) { openTool(Tool.MIXER) },
+        )
+        DockTab.TEXT -> listOf(
+            EditorAction(Icons.Filled.Title, stringResource(R.string.action_add_text), project.clips.isNotEmpty()) { vm.addText(addTextLabel); openTool(Tool.TEXT) },
+            EditorAction(Icons.Filled.Subtitles, stringResource(R.string.pro_captions), project.clips.isNotEmpty()) { openTool(Tool.CAPTIONS) },
+        )
+        DockTab.ADJUST -> listOf(
+            EditorAction(Icons.Filled.Tune, stringResource(R.string.tool_adjust)) { openTool(Tool.ADJUST) },
+            EditorAction(Icons.Filled.Grain, stringResource(R.string.tool_grain)) { openTool(Tool.GRAIN) },
+            EditorAction(Icons.Filled.Gradient, stringResource(R.string.tool_fades)) { openTool(Tool.VIDEO_FADES) },
+        )
+        DockTab.FILTER -> listOf(
+            EditorAction(Icons.Filled.AutoFixHigh, stringResource(R.string.tool_filters)) { openTool(Tool.FILTERS) },
+        )
+        DockTab.FRAME -> listOf(
+            EditorAction(Icons.Filled.Crop, stringResource(R.string.crop), project.clips.isNotEmpty()) { openTool(Tool.CROP) },
+            EditorAction(Icons.Filled.AspectRatio, stringResource(R.string.tool_canvas)) { openTool(Tool.CANVAS) },
+        )
+    }
     is Selection.Clip -> {
         val clip = project.clips.firstOrNull { it.id == selection.id }
         listOf(
@@ -565,37 +638,16 @@ private fun actionsFor(
 }
 
 @Composable
-private fun ActionRow(actions: List<EditorAction>) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 8.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        actions.forEach { a ->
-            Column(
-                Modifier
-                    .width(76.dp)
-                    .clickable(enabled = a.enabled, onClick = a.onClick)
-                    .padding(vertical = 6.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                val tint = if (a.enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline
-                Icon(a.icon, null, tint = tint, modifier = Modifier.size(24.dp))
-                Text(a.label, style = MaterialTheme.typography.labelSmall, color = tint, maxLines = 2, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-            }
-        }
-    }
-}
-
-@Composable
 private fun ToolSheet(title: String, onDone: () -> Unit, content: @Composable () -> Unit) {
+    // In the page, not floating, so it is a Material surface rather than glass:
+    // glass frosts what is behind it, and this sits inside what the glass frosts.
     Column(
         Modifier
             .fillMaxWidth()
+            .padding(horizontal = 8.dp)
             .heightIn(max = 300.dp)
-            .background(MaterialTheme.colorScheme.surfaceContainer),
+            .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp, bottomStart = 20.dp, bottomEnd = 20.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh),
     ) {
         Row(
             Modifier
@@ -746,3 +798,9 @@ private fun toolTitle(t: Tool) = when (t) {
     Tool.MARKERS -> R.string.editor_markers
     Tool.EXPORT -> R.string.action_export
 }
+
+/** Height of the floating top bar, which the page keeps clear. */
+private val TOP_BAR_HEIGHT = 56.dp
+
+/** What the page keeps clear for the floating dock: its height and its margins. */
+private val DOCK_ROOM = 100.dp
