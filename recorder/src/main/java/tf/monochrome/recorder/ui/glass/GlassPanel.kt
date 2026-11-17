@@ -60,6 +60,14 @@ fun GlassPanel(
     hazeState: HazeState? = LocalGlassBackdrop.current,
     glass: GlassSettings = LocalGlass.current,
     blockTouchesBelow: Boolean = false,
+    /**
+     * The full backdrop blur and its tint instead of the live lens's light
+     * blur and clear glass (Tryptify's `frosted`): for a pane whose backdrop
+     * should read as soft colour, not as the page bent at its rim — a sheet
+     * of settings over moving video, whose text clear glass would leave
+     * fighting the picture.
+     */
+    frosted: Boolean = false,
     content: @Composable BoxScope.() -> Unit,
 ) {
     val shape = remember(corner) { lensClipShape(corner) }
@@ -95,7 +103,7 @@ fun GlassPanel(
             )
         }
 
-        GlassMaterial(hazeState = hazeState, glass = glass, corner = corner)
+        GlassMaterial(hazeState = hazeState, glass = glass, corner = corner, frosted = frosted)
         GlassInkScope(glass) { content() }
     }
 }
@@ -173,6 +181,7 @@ internal fun BoxScope.GlassMaterial(
     glass: GlassSettings,
     corner: Dp,
     press: GlassPress? = null,
+    frosted: Boolean = false,
 ) {
     if (!shaderGlassFor(glass)) return
     // Asked of this pane's own glass, not the screen's.
@@ -184,7 +193,7 @@ internal fun BoxScope.GlassMaterial(
     val isDark = frostBg.luminance() <= 0.5f
     // shaderGlassFor above has already asked for Android 13, which the lens
     // needs, so the version is not asked again here.
-    val liveLens = LIVE_LENS_GLASS && liveLensCompiles && hazeState != null
+    val liveLens = !frosted && LIVE_LENS_GLASS && liveLensCompiles && hazeState != null
     // Only with a real backdrop. Frosting an unfed state draws the frost's own
     // base colour as a flat pane, which is the slab this whole component
     // exists not to be.

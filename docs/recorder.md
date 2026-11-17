@@ -468,7 +468,12 @@ three pages sit under a floating glass dock (Record, Library, Settings), the
 Library's Recordings/Drafts switch is the glass segmented control, and the
 cards in every page — the Record screen's, each recording and draft, each
 Settings section — are glass laid in the page (`GlassCard`: the slab alone,
-no backdrop, as Tryptify's cards in its lists are). Glass panes are drawn *beside* the content they frost, never inside
+no backdrop, as Tryptify's cards in its lists are). The editor's preview draws into a TextureView, not a SurfaceView: a
+SurfaceView shows video through a hole cut in the window, and the glass, which
+copies what is behind it, copied the hole — the video came through the export
+sheet sharp. The export sheet is also *frosted* (Tryptify's option: the full
+backdrop blur and a dark tint instead of the clear live lens), because it sits
+over moving video. Glass panes are drawn *beside* the content they frost, never inside
 it; a pane inside its own backdrop paints a flat slab. Tool sheets sit in the
 page and are Material surfaces for that reason. Nothing of the glass has been
 seen on a phone yet; the shaders are byte-for-byte Tryptify's.

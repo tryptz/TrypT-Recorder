@@ -93,6 +93,7 @@ import tf.monochrome.recorder.capture.formatDuration
 import tf.monochrome.recorder.ui.glass.GlassButton
 import tf.monochrome.recorder.ui.glass.GlassPanel
 import tf.monochrome.recorder.ui.glass.GlassPill
+import tf.monochrome.recorder.ui.glass.LocalGlass
 import kotlin.math.roundToInt
 
 /*
@@ -191,7 +192,11 @@ internal fun ExportSheet(
     queueBothAspects: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    GlassPanel(modifier = modifier, blockTouchesBelow = true) {
+    // Frosted and darker than the dock: this pane sits over moving video, and
+    // clear glass there leaves the settings fighting the picture.
+    val glass = LocalGlass.current
+    val sheetGlass = remember(glass) { glass.copy(hazeTint = SHEET_FROST, hazeBlurDp = maxOf(glass.hazeBlurDp, SHEET_BLUR_DP)) }
+    GlassPanel(modifier = modifier, blockTouchesBelow = true, glass = sheetGlass, frosted = true) {
         Column(
             Modifier
                 .fillMaxWidth()
@@ -705,3 +710,11 @@ private fun exportQualityName(q: ExportQuality) = when (q) {
     ExportQuality.STANDARD -> R.string.quality_standard
     ExportQuality.HIGH -> R.string.quality_high
 }
+
+/**
+ * The export sheet's frost: its tint strength (Tryptify's "Backdrop tint",
+ * 0–2; dark glass is 32% black at 1) and its blur. Over video the sheet is
+ * nearly a dark pane with the picture as soft colour behind it.
+ */
+private const val SHEET_FROST = 1.8f
+private const val SHEET_BLUR_DP = 40f

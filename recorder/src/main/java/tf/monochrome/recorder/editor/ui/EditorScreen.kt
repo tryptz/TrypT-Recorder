@@ -1,6 +1,6 @@
 package tf.monochrome.recorder.editor.ui
 
-import android.view.SurfaceView
+import android.view.TextureView
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -294,7 +294,7 @@ fun EditorScreen(projectId: String, onClose: () -> Unit) {
                 } else {
                     Box(Modifier.aspectRatio(aspect.coerceIn(0.2f, 5f))) {
                         AndroidView(
-                            factory = { ctx -> SurfaceView(ctx).also(vm::attachSurface) },
+                            factory = { ctx -> TextureView(ctx).also(vm::attachSurface) },
                             onRelease = vm::detachSurface,
                             modifier = Modifier.fillMaxSize(),
                         )

@@ -7,7 +7,10 @@ import android.content.Intent
 import android.net.Uri
 import android.util.Log
 import android.graphics.Bitmap
-import android.view.SurfaceView
+import android.graphics.SurfaceTexture
+import android.view.Surface
+import android.view.TextureView
+import androidx.media3.common.util.Size
 import java.lang.ref.WeakReference
 import androidx.annotation.OptIn
 import androidx.lifecycle.AndroidViewModel
@@ -119,7 +122,16 @@ class EditorViewModel(app: Application, private val projectId: String) : Android
     /** The preview shows the grain alone, on mid grey. Never exported. */
     val grainSolo: StateFlow<Boolean> = _grainSolo.asStateFlow()
 
-    private var surfaceView: WeakReference<SurfaceView>? = null
+    /**
+     * The preview draws into a TextureView, not a SurfaceView. A SurfaceView
+     * shows video through a hole cut in the window, and anything that copies
+     * the screen behind it — the glass panes' blur — copies the hole: the
+     * export sheet showed the video sharp through itself. A TextureView's
+     * frames are ordinary content, which the glass frosts like the rest.
+     */
+    private var textureView: WeakReference<TextureView>? = null
+    private var videoSurface: Surface? = null
+    private var videoSize = Size(0, 0)
     private var playerUsesOverlayGraph = false
     /** The player reported an error; it is replaced on the next rebuild rather than reused. */
     private var playerFailed = false
@@ -418,22 +430,53 @@ class EditorViewModel(app: Application, private val projectId: String) : Android
 
     // ── Preview ────────────────────────────────────────────────────────
 
-    fun attachSurface(view: SurfaceView) {
-        surfaceView = WeakReference(view)
-        player?.setVideoSurfaceView(view)
+    fun attachSurface(view: TextureView) {
+        textureView = WeakReference(view)
+        view.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+            override fun onSurfaceTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) {
+                useTexture(texture, width, height)
+            }
+
+            override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) {
+                videoSize = Size(width, height)
+                videoSurface?.let { surface -> player?.let { runCatching { it.setVideoSurface(surface, videoSize) } } }
+            }
+
+            override fun onSurfaceTextureDestroyed(texture: SurfaceTexture): Boolean {
+                dropTexture()
+                return true
+            }
+
+            override fun onSurfaceTextureUpdated(texture: SurfaceTexture) = Unit
+        }
+        view.surfaceTexture?.let { useTexture(it, view.width, view.height) }
         lastPlan = null
         schedulePreview(immediate = true)
     }
 
-    fun detachSurface(view: SurfaceView) {
-        if (surfaceView?.get() !== view) return
-        surfaceView = null
+    private fun useTexture(texture: SurfaceTexture, width: Int, height: Int) {
+        videoSurface?.release()
+        val surface = Surface(texture)
+        videoSurface = surface
+        videoSize = Size(width, height)
+        player?.let { runCatching { it.setVideoSurface(surface, videoSize) } }
+        lastPlan = null
+        schedulePreview(immediate = true)
+    }
+
+    private fun dropTexture() {
+        player?.let { runCatching { it.clearVideoSurface() } }
+        videoSurface?.release()
+        videoSurface = null
+    }
+
+    fun detachSurface(view: TextureView) {
+        if (textureView?.get() !== view) return
+        textureView = null
         rebuildJob?.cancel()
         analysisJob?.cancel()
-        player?.let { p ->
-            runCatching { p.clearVideoSurfaceView(view) }
-            p.pause()
-        }
+        player?.let { p -> runCatching { p.pause() } }
+        dropTexture()
         releasePlayer()
         viewModelScope.launch { saveNow() }
     }
@@ -442,13 +485,13 @@ class EditorViewModel(app: Application, private val projectId: String) : Android
     val mixerPeaks = _mixerPeaks.asStateFlow()
     private val previewMixer = RecorderAudioMixerFactory(publishPeaks = { _mixerPeaks.value = it })
 
-    private fun createPlayer(view: SurfaceView, useOverlayGraph: Boolean): CompositionPlayer {
+    private fun createPlayer(useOverlayGraph: Boolean): CompositionPlayer {
         releasePlayer()
         val p = CompositionPlayer.Builder(getApplication()).apply {
             setAudioMixerFactory(previewMixer)
             if (useOverlayGraph) setVideoGraphFactory(MultipleInputVideoGraph.Factory())
         }.build()
-        p.setVideoSurfaceView(view)
+        videoSurface?.let { p.setVideoSurface(it, videoSize) }
         p.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 _playing.value = isPlaying
@@ -556,7 +599,8 @@ class EditorViewModel(app: Application, private val projectId: String) : Android
             if (!_grainSolo.value) pl else pl.copy(visuals = pl.visuals?.let { v -> v.copy(grain = v.grain?.copy(solo = true)) })
         }
         plan?.visuals?.let { _aspect.value = it.width.toFloat() / it.height }
-        val view = surfaceView?.get() ?: return
+        // Nothing to draw into yet: the view brings its surface, then rebuilds.
+        textureView?.get() ?: return
         if (plan == lastPlan && p.musicLinks == lastPreviewLinks) return
         val previousPlan = lastPlan
         plan?.mixer?.let { previewMixer.settings = it }
@@ -582,7 +626,7 @@ class EditorViewModel(app: Application, private val projectId: String) : Android
             }
             val wasPlaying = player?.isPlaying == true
             val usesOverlay = plan.overlays.isNotEmpty()
-            val pl = player?.takeIf { playerUsesOverlayGraph == usesOverlay && !playerFailed } ?: createPlayer(view, usesOverlay)
+            val pl = player?.takeIf { playerUsesOverlayGraph == usesOverlay && !playerFailed } ?: createPlayer(usesOverlay)
             pl.setComposition(CompositionFactory.build(getApplication(), plan, preview = true, music = music), _playheadUs.value / 1000)
             pl.prepare()
             lastPlan = plan
