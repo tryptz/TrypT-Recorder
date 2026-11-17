@@ -23,6 +23,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.ui.graphics.Color
+import tf.monochrome.recorder.editor.ui.Segmented
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -44,8 +47,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.PrimaryTabRow
-import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -153,10 +154,14 @@ fun LibraryScreen(
 
     Box(modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
-            PrimaryTabRow(selectedTabIndex = tab) {
-                Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text(stringResource(R.string.library_recordings)) })
-                Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text(stringResource(R.string.library_drafts)) })
-            }
+            Segmented(
+                options = listOf(stringResource(R.string.library_recordings), stringResource(R.string.library_drafts)),
+                selected = tab,
+                onSelect = { tab = it },
+                modifier = Modifier
+                    .align(Alignment.CenterHorizontally)
+                    .padding(top = 12.dp, bottom = 8.dp),
+            )
             if (tab == 0) {
                 if (!canReadAll) {
                     Text(
@@ -172,17 +177,19 @@ fun LibraryScreen(
                 if (recordings.isEmpty()) {
                     Empty(stringResource(R.string.library_no_recordings))
                 } else {
-                    LazyColumn(Modifier.fillMaxSize()) {
+                    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 88.dp)) {
                         items(recordings, key = { it.uri.toString() }) { r ->
-                            ListItem(
-                                modifier = Modifier.clickable { acting = r },
-                                leadingContent = { RecordingThumb(r.uri) },
-                                headlineContent = { Text(r.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                supportingContent = {
-                                    Text("${formatDuration(r.durationMs)} · ${formatBytes(context, r.sizeBytes)} · ${formatDate(r.dateAddedSec * 1000)}")
-                                },
-                                colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.background),
-                            )
+                            GlassCard(Modifier.padding(horizontal = 12.dp, vertical = 4.dp), padding = 0.dp) {
+                                ListItem(
+                                    modifier = Modifier.clickable { acting = r },
+                                    leadingContent = { RecordingThumb(r.uri) },
+                                    headlineContent = { Text(r.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                    supportingContent = {
+                                        Text("${formatDuration(r.durationMs)} · ${formatBytes(context, r.sizeBytes)} · ${formatDate(r.dateAddedSec * 1000)}")
+                                    },
+                                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                                )
+                            }
                         }
                     }
                 }
@@ -195,24 +202,26 @@ fun LibraryScreen(
                 if (drafts.isEmpty()) {
                     Empty(stringResource(R.string.library_no_drafts))
                 } else {
-                    LazyColumn(Modifier.fillMaxSize()) {
+                    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 88.dp)) {
                         items(drafts, key = { it.id }) { d ->
-                            ListItem(
-                                modifier = Modifier.combinedClickable(onClick = { onOpenProject(d.id) }, onLongClick = { deletingDraft = d }),
-                                leadingContent = { DraftThumb(d.coverUri) },
-                                headlineContent = { Text(d.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                supportingContent = {
-                                    Text(pluralStringResource(R.plurals.draft_summary, d.clipCount, d.clipCount, formatDuration(d.durationUs / 1000), formatDate(d.updatedAt)))
-                                },
-                                trailingContent = {
-                                    Icon(
-                                        Icons.Filled.Delete,
-                                        stringResource(R.string.action_delete),
-                                        modifier = Modifier.clickable { deletingDraft = d },
-                                    )
-                                },
-                                colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.background),
-                            )
+                            GlassCard(Modifier.padding(horizontal = 12.dp, vertical = 4.dp), padding = 0.dp) {
+                                ListItem(
+                                    modifier = Modifier.combinedClickable(onClick = { onOpenProject(d.id) }, onLongClick = { deletingDraft = d }),
+                                    leadingContent = { DraftThumb(d.coverUri) },
+                                    headlineContent = { Text(d.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                    supportingContent = {
+                                        Text(pluralStringResource(R.plurals.draft_summary, d.clipCount, d.clipCount, formatDuration(d.durationUs / 1000), formatDate(d.updatedAt)))
+                                    },
+                                    trailingContent = {
+                                        Icon(
+                                            Icons.Filled.Delete,
+                                            stringResource(R.string.action_delete),
+                                            modifier = Modifier.clickable { deletingDraft = d },
+                                        )
+                                    },
+                                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                                )
+                            }
                         }
                     }
                 }

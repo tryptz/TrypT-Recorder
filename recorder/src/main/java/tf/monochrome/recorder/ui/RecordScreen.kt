@@ -236,15 +236,10 @@ fun RecordScreen(onEdit: (Uri) -> Unit, modifier: Modifier = Modifier) {
     }
 }
 
+/** The screen's cards are the app's glass ([GlassCard]). */
 @Composable
 private fun Card(padding: androidx.compose.ui.unit.Dp = 16.dp, content: @Composable () -> Unit) {
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-            .padding(padding),
-    ) { content() }
+    GlassCard(padding = padding) { content() }
 }
 
 @Composable

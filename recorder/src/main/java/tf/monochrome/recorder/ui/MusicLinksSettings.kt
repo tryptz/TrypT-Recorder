@@ -99,7 +99,7 @@ internal fun MusicLinksSettings() {
     }
 
     SectionHeader(stringResource(R.string.music_links_title))
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+    GlassCard(Modifier.padding(horizontal = 12.dp)) {
         Text(stringResource(R.string.music_links_description), style = MaterialTheme.typography.bodyMedium)
         for (item in RecorderLinkTarget.entries) {
             val existing = links.firstOrNull { it.target == item.key }
@@ -255,7 +255,7 @@ internal fun CreativeMediaSettings() {
     var result by rememberSaveable { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     SectionHeader(stringResource(R.string.creative_music_library))
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+    GlassCard(Modifier.padding(horizontal = 12.dp)) {
         OutlinedTextField(
             value = link, onValueChange = { link = it }, enabled = !busy,
             label = { Text(stringResource(R.string.music_link_import)) },

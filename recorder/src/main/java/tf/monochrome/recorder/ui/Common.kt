@@ -208,3 +208,24 @@ fun formatBytes(context: Context, bytes: Long): String = Formatter.formatShortFi
 
 fun formatDate(epochMs: Long): String =
     DateUtils.getRelativeTimeSpanString(epochMs, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS).toString()
+
+/**
+ * A card of the app's glass laid in a page: the shader slab with its bevel
+ * and rim, and text chosen to read on it. In a page, not floating, so it
+ * takes no backdrop (a pane inside the backdrop it frosts paints a flat
+ * slab); Tryptify's cards in its lists are the same.
+ */
+@Composable
+fun GlassCard(
+    modifier: Modifier = Modifier,
+    padding: androidx.compose.ui.unit.Dp = 16.dp,
+    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
+) {
+    tf.monochrome.recorder.ui.glass.GlassPanel(
+        modifier = modifier.fillMaxWidth(),
+        corner = 24.dp,
+        hazeState = null,
+    ) {
+        androidx.compose.foundation.layout.Column(Modifier.fillMaxWidth().padding(padding), content = content)
+    }
+}

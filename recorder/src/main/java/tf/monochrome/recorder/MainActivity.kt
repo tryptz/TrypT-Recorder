@@ -1,5 +1,28 @@
 package tf.monochrome.recorder
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.dp
+import tf.monochrome.recorder.ui.glass.GlassPill
+import tf.monochrome.recorder.ui.glass.LocalGlassBackdrop
+import tf.monochrome.recorder.ui.glass.glassBackdrop
+import tf.monochrome.recorder.ui.glass.rememberGlassBackdrop
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -18,9 +41,6 @@ import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -124,35 +144,40 @@ private fun AppRoot(pendingEdit: MutableStateFlow<Uri?>) {
             scope.launch { RecorderApp.instance.projects.refresh() }
         })
     } else {
-        Scaffold(
-            bottomBar = {
-                NavigationBar {
-                    NavigationBarItem(
-                        selected = tab == 0,
-                        onClick = { tab = 0 },
-                        icon = { Icon(Icons.Filled.FiberManualRecord, null) },
-                        label = { Text(stringResource(R.string.tab_record)) },
-                    )
-                    NavigationBarItem(
-                        selected = tab == 1,
-                        onClick = { tab = 1 },
-                        icon = { Icon(Icons.Filled.VideoLibrary, null) },
-                        label = { Text(stringResource(R.string.tab_library)) },
-                    )
-                    NavigationBarItem(
-                        selected = tab == 2,
-                        onClick = { tab = 2 },
-                        icon = { Icon(Icons.Filled.Settings, null) },
-                        label = { Text(stringResource(R.string.tab_settings)) },
-                    )
+        val backdrop = rememberGlassBackdrop()
+        CompositionLocalProvider(LocalGlassBackdrop provides backdrop) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background),
+            ) {
+                // The pages are the dock's backdrop: it is drawn beside them, never inside.
+                val m = Modifier
+                    .fillMaxSize()
+                    .statusBarsPadding()
+                    .navigationBarsPadding()
+                    .padding(bottom = APP_DOCK_ROOM)
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .glassBackdrop(backdrop)
+                        .background(MaterialTheme.colorScheme.background),
+                ) {
+                    when (tab) {
+                        0 -> RecordScreen(onEdit = { openUris(listOf(it)) }, modifier = m)
+                        1 -> LibraryScreen(onOpenProject = { editing = it }, onEditUris = ::openUris, modifier = m)
+                        else -> SettingsScreen(modifier = m)
+                    }
                 }
-            },
-        ) { padding ->
-            val m = Modifier.padding(padding)
-            when (tab) {
-                0 -> RecordScreen(onEdit = { openUris(listOf(it)) }, modifier = m)
-                1 -> LibraryScreen(onOpenProject = { editing = it }, onEditUris = ::openUris, modifier = m)
-                else -> SettingsScreen(modifier = m)
+                AppDock(
+                    selected = tab,
+                    onSelect = { tab = it },
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .navigationBarsPadding()
+                        .padding(horizontal = 40.dp, vertical = 12.dp)
+                        .fillMaxWidth(),
+                )
             }
         }
     }
@@ -164,5 +189,38 @@ private fun AppRoot(pendingEdit: MutableStateFlow<Uri?>) {
             title = { Text(stringResource(R.string.opening_editor)) },
             text = { CircularProgressIndicator() },
         )
+    }
+}
+
+/** What the pages keep clear for the floating dock: its height and its margins. */
+private val APP_DOCK_ROOM = 92.dp
+
+/** The app's three pages as a floating glass dock, the current one in the accent. */
+@Composable
+private fun AppDock(selected: Int, onSelect: (Int) -> Unit, modifier: Modifier = Modifier) {
+    val tabs = listOf(
+        Icons.Filled.FiberManualRecord to R.string.tab_record,
+        Icons.Filled.VideoLibrary to R.string.tab_library,
+        Icons.Filled.Settings to R.string.tab_settings,
+    )
+    GlassPill(modifier = modifier.height(68.dp)) {
+        Row(Modifier.fillMaxSize().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            tabs.forEachIndexed { i, (icon, label) ->
+                val on = i == selected
+                val tint = if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                Column(
+                    Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(18.dp))
+                        .clickable(role = Role.Tab) { onSelect(i) }
+                        .semantics { this.selected = on }
+                        .padding(vertical = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Icon(icon, null, tint = tint)
+                    Text(stringResource(label), style = MaterialTheme.typography.labelMedium, color = tint, maxLines = 1)
+                }
+            }
+        }
     }
 }

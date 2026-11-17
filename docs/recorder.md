@@ -446,7 +446,9 @@ emulator, so none of it has run on a phone. Before a release, check at least:
 - [ ] Look: the accent follows the wallpaper (Android 12+); the top bar,
       export sheet, segmented control and dock are glass that bends and
       frosts what is under it (Android 13+), a plain surface on 10–12;
-      every export setting still reachable (More); Save exports.
+      every export setting still reachable (More); Save exports. The app's
+      dock, the Library switch and the cards on all three pages are glass;
+      lists scroll smoothly with many glass cards on screen.
 - [ ] Crash report: after a crash (or a freeze), Settings shows *Last crash*
       and *Share report* sends it.
 
@@ -461,7 +463,12 @@ editor follows the owner's reference layout: Cancel / format / Save across
 the top, the export sheet as a glass pane (stepped Resolution, Frame rate and
 Quality sliders with the estimated file size), the transport, a tool row, and
 a glass dock whose tabs (Edit, Audio, Text, Adjust, Filter, Frame) pick the
-tools. Glass panes are drawn *beside* the content they frost, never inside
+tools. The rest of the app is the same material: the
+three pages sit under a floating glass dock (Record, Library, Settings), the
+Library's Recordings/Drafts switch is the glass segmented control, and the
+cards in every page — the Record screen's, each recording and draft, each
+Settings section — are glass laid in the page (`GlassCard`: the slab alone,
+no backdrop, as Tryptify's cards in its lists are). Glass panes are drawn *beside* the content they frost, never inside
 it; a pane inside its own backdrop paints a flat slab. Tool sheets sit in the
 page and are Material surfaces for that reason. Nothing of the glass has been
 seen on a phone yet; the shaders are byte-for-byte Tryptify's.

@@ -3,6 +3,8 @@ package tf.monochrome.recorder.ui
 import android.content.Intent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -46,87 +48,98 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
             .verticalScroll(rememberScrollState()),
     ) {
         SectionHeader(stringResource(R.string.settings_video))
-        ChoiceRow(
-            title = stringResource(R.string.settings_resolution),
-            options = ResolutionPreset.entries,
-            selected = s.resolution,
-            label = { stringResource(resolutionLabel(it)) },
-            onSelect = { r -> store.update { it.copy(resolution = r) } },
-        )
-        ChoiceRow(
-            title = stringResource(R.string.settings_frame_rate),
-            options = RecorderSettings.FRAME_RATES,
-            selected = s.frameRate,
-            label = { stringResource(R.string.fps, it) },
-            onSelect = { f -> store.update { it.copy(frameRate = f) } },
-        )
-        ChoiceRow(
-            title = stringResource(R.string.settings_quality),
-            options = QualityPreset.entries,
-            selected = s.quality,
-            label = { stringResource(qualityLabel(it)) },
-            onSelect = { q -> store.update { it.copy(quality = q) } },
-        )
-        Text(
-            stringResource(R.string.settings_video_hint),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 16.dp),
-        )
+        GlassCard(Modifier.padding(horizontal = 12.dp), padding = 0.dp) {
+            ChoiceRow(
+                title = stringResource(R.string.settings_resolution),
+                options = ResolutionPreset.entries,
+                selected = s.resolution,
+                label = { stringResource(resolutionLabel(it)) },
+                onSelect = { r -> store.update { it.copy(resolution = r) } },
+            )
+            ChoiceRow(
+                title = stringResource(R.string.settings_frame_rate),
+                options = RecorderSettings.FRAME_RATES,
+                selected = s.frameRate,
+                label = { stringResource(R.string.fps, it) },
+                onSelect = { f -> store.update { it.copy(frameRate = f) } },
+            )
+            ChoiceRow(
+                title = stringResource(R.string.settings_quality),
+                options = QualityPreset.entries,
+                selected = s.quality,
+                label = { stringResource(qualityLabel(it)) },
+                onSelect = { q -> store.update { it.copy(quality = q) } },
+            )
+            Text(
+                stringResource(R.string.settings_video_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 16.dp),
+            )
+        }
 
         SectionHeader(stringResource(R.string.settings_audio))
-        ChoiceRow(
-            title = stringResource(R.string.settings_audio_source),
-            options = AudioSource.entries,
-            selected = s.audioSource,
-            label = { stringResource(audioShortLabel(it)) },
-            onSelect = { a -> store.update { it.copy(audioSource = a) } },
-        )
-        Text(
-            stringResource(R.string.settings_audio_hint),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 16.dp),
-        )
+        GlassCard(Modifier.padding(horizontal = 12.dp), padding = 0.dp) {
+            ChoiceRow(
+                title = stringResource(R.string.settings_audio_source),
+                options = AudioSource.entries,
+                selected = s.audioSource,
+                label = { stringResource(audioShortLabel(it)) },
+                onSelect = { a -> store.update { it.copy(audioSource = a) } },
+            )
+            Text(
+                stringResource(R.string.settings_audio_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 16.dp),
+            )
+        }
 
         SectionHeader(stringResource(R.string.settings_recording))
-        ChoiceRow(
-            title = stringResource(R.string.settings_countdown),
-            options = RecorderSettings.COUNTDOWNS,
-            selected = s.countdownSeconds,
-            label = { if (it == 0) stringResource(R.string.countdown_off) else pluralStringResource(R.plurals.countdown_seconds, it, it) },
-            onSelect = { c -> store.update { it.copy(countdownSeconds = c) } },
-        )
-        SwitchRow(
-            title = stringResource(R.string.settings_hide_button),
-            subtitle = stringResource(R.string.settings_hide_button_hint),
-            checked = s.hideButtonWhileRecording,
-            onChange = { v -> store.update { it.copy(hideButtonWhileRecording = v) } },
-        )
+        GlassCard(Modifier.padding(horizontal = 12.dp), padding = 0.dp) {
+            ChoiceRow(
+                title = stringResource(R.string.settings_countdown),
+                options = RecorderSettings.COUNTDOWNS,
+                selected = s.countdownSeconds,
+                label = { if (it == 0) stringResource(R.string.countdown_off) else pluralStringResource(R.plurals.countdown_seconds, it, it) },
+                onSelect = { c -> store.update { it.copy(countdownSeconds = c) } },
+            )
+            SwitchRow(
+                title = stringResource(R.string.settings_hide_button),
+                subtitle = stringResource(R.string.settings_hide_button_hint),
+                checked = s.hideButtonWhileRecording,
+                onChange = { v -> store.update { it.copy(hideButtonWhileRecording = v) } },
+            )
+        }
 
         SectionHeader(stringResource(R.string.settings_storage))
-        Text(
-            stringResource(
-                R.string.settings_storage_text,
-                MediaStoreFile.relativePath(MediaStoreFile.Kind.VIDEO),
-                MediaStoreFile.relativePath(MediaStoreFile.Kind.AUDIO),
-                MediaStoreFile.relativePath(MediaStoreFile.Kind.GIF),
-            ),
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.padding(horizontal = 16.dp),
-        )
+        GlassCard(Modifier.padding(horizontal = 12.dp), padding = 0.dp) {
+            Text(
+                stringResource(
+                    R.string.settings_storage_text,
+                    MediaStoreFile.relativePath(MediaStoreFile.Kind.VIDEO),
+                    MediaStoreFile.relativePath(MediaStoreFile.Kind.AUDIO),
+                    MediaStoreFile.relativePath(MediaStoreFile.Kind.GIF),
+                ),
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(16.dp),
+            )
+        }
 
         CreativeMediaSettings()
         MusicLinksSettings()
         CrashLogSettings()
 
         SectionHeader(stringResource(R.string.settings_about))
-        Text(
-            stringResource(R.string.settings_about_text),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 32.dp),
-        )
+        GlassCard(Modifier.padding(horizontal = 12.dp), padding = 0.dp) {
+            Text(
+                stringResource(R.string.settings_about_text),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(16.dp),
+            )
+        }
+        Spacer(Modifier.height(24.dp))
     }
 }
 
@@ -140,28 +153,31 @@ private fun CrashLogSettings() {
     }
     val text = log ?: return
     SectionHeader(stringResource(R.string.settings_crash))
-    Text(
-        stringResource(R.string.settings_crash_hint),
-        style = MaterialTheme.typography.bodyMedium,
-        modifier = Modifier.padding(horizontal = 16.dp),
-    )
-    Text(
-        text.lineSequence().take(6).joinToString("\n"),
-        style = MaterialTheme.typography.bodySmall,
-        fontFamily = FontFamily.Monospace,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-    )
-    Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Button(onClick = {
-            val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
-            context.startActivity(Intent.createChooser(send, null))
-        }) { Text(stringResource(R.string.settings_crash_share)) }
-        TextButton(onClick = {
-            CrashLog.clear(context)
-            refresh++
-        }) { Text(stringResource(R.string.settings_crash_clear)) }
+    GlassCard(Modifier.padding(horizontal = 12.dp), padding = 0.dp) {
+        Text(
+            stringResource(R.string.settings_crash_hint),
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp),
+        )
+        Text(
+            text.lineSequence().take(6).joinToString("\n"),
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = FontFamily.Monospace,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        )
+        Row(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = {
+                val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
+                context.startActivity(Intent.createChooser(send, null))
+            }) { Text(stringResource(R.string.settings_crash_share)) }
+            TextButton(onClick = {
+                CrashLog.clear(context)
+                refresh++
+            }) { Text(stringResource(R.string.settings_crash_clear)) }
+        }
     }
+    Spacer(Modifier.height(16.dp))
 }
 
 fun resolutionLabel(r: ResolutionPreset) = when (r) {
