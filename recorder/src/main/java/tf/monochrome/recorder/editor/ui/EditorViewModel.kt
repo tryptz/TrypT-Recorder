@@ -38,6 +38,7 @@ import tf.monochrome.recorder.R
 import tf.monochrome.recorder.RecorderApp
 import tf.monochrome.recorder.editor.export.CompositionFactory
 import tf.monochrome.recorder.editor.export.MusicLinkAnalysis
+import tf.monochrome.recorder.editor.export.MusicLinkTimeline
 import tf.monochrome.recorder.editor.model.VisualLink
 import tf.monochrome.recorder.editor.export.RecorderAudioMixerFactory
 import tf.monochrome.recorder.editor.export.ExportManager
@@ -565,6 +566,7 @@ class EditorViewModel(app: Application, private val projectId: String) : Android
         player?.let { runCatching { it.release() }.onFailure { e -> Log.w(TAG, "release", e) } }
         player = null
         lastPlan = null
+        playerMusicKey = null
         _playing.value = false
         _mixerPeaks.value = FloatArray(0)
     }
@@ -613,16 +615,18 @@ class EditorViewModel(app: Application, private val projectId: String) : Android
      * plays at once without the links' effect, and is rebuilt with it when the
      * analysis is done.
      */
-    private fun analyseInBackground(p: Project, key: MusicLinkAnalysis.Key) {
+    private fun analyseInBackground(key: MusicLinkAnalysis.Key) {
         if (analysisKey == key && analysisJob?.isActive == true) return
         analysisJob?.cancel()
         analysisKey = key
         analysisJob = viewModelScope.launch {
             try {
-                MusicLinkAnalysis.prepare(getApplication(), p)
+                // Shared with an export of the same sound, if one asks while this runs.
+                MusicLinkAnalysis.analyse(getApplication(), key)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                // Remembered as failed: later rebuilds play without it instead of starting it again.
                 Log.w(TAG, "music link analysis", e)
                 return@launch
             }
@@ -631,6 +635,19 @@ class EditorViewModel(app: Application, private val projectId: String) : Android
             schedulePreview(immediate = true)
         }
     }
+
+    /** Starts the analysis [key] needs unless it is done, running, or has failed; with no key, stops any. */
+    private fun keepAnalysisFor(key: MusicLinkAnalysis.Key?, music: MusicLinkTimeline?) {
+        if (key != null && music == null) {
+            if (!MusicLinkAnalysis.failed(key)) analyseInBackground(key)
+        } else {
+            analysisJob?.cancel()
+            analysisKey = null
+        }
+    }
+
+    /** The analysis the current player was built with, or null for none. */
+    private var playerMusicKey: MusicLinkAnalysis.Key? = null
 
     private suspend fun rebuildPreview() {
         val p = project?.let {
@@ -657,10 +674,17 @@ class EditorViewModel(app: Application, private val projectId: String) : Android
         if (plan == lastPlan && p.musicLinks == lastPreviewLinks) return
         val previousPlan = lastPlan
         plan?.mixer?.let { previewMixer.settings = it }
-        if (p.musicLinks.isEmpty() && lastPreviewLinks.isEmpty() &&
-            plan?.mixer != null && previousPlan?.mixer != null && plan == previousPlan.copy(mixer = plan.mixer)
+        val musicKey = runCatching { MusicLinkAnalysis.key(p) }.getOrNull()
+        val music = musicKey?.let(MusicLinkAnalysis::cached)
+        if (p.musicLinks == lastPreviewLinks && player != null &&
+            plan?.mixer != null && previousPlan?.mixer != null && plan == previousPlan.copy(mixer = plan.mixer) &&
+            (music == null || musicKey == playerMusicKey)
         ) {
+            // Only the mix changed, and the live mixer already plays it. Links
+            // follow the mixed sound, so they need it measured again; the player
+            // keeps the analysis it has until that is done, then is rebuilt once.
             lastPlan = plan
+            keepAnalysisFor(musicKey, music)
             return
         }
         _previewError.value = null
@@ -669,21 +693,19 @@ class EditorViewModel(app: Application, private val projectId: String) : Android
             return
         }
         try {
-            val musicKey = MusicLinkAnalysis.key(p)
-            val music = musicKey?.let(MusicLinkAnalysis::cached)
-            if (musicKey != null && music == null) {
-                analyseInBackground(p, musicKey)
-            } else {
-                analysisJob?.cancel()
-                analysisKey = null
+            keepAnalysisFor(musicKey, music)
+            // Off the main thread: the gaps' silence files are disk work, the LUTs arithmetic.
+            val composition = withContext(Dispatchers.IO) {
+                CompositionFactory.build(getApplication(), plan, preview = true, music = music)
             }
             val wasPlaying = player?.isPlaying == true
             val usesOverlay = plan.overlays.isNotEmpty()
             val pl = player?.takeIf { playerUsesOverlayGraph == usesOverlay && !playerFailed } ?: createPlayer(usesOverlay)
-            pl.setComposition(CompositionFactory.build(getApplication(), plan, preview = true, music = music), _playheadUs.value / 1000)
+            pl.setComposition(composition, _playheadUs.value / 1000)
             pl.prepare()
             lastPlan = plan
             lastPreviewLinks = p.musicLinks
+            playerMusicKey = musicKey.takeIf { music != null }
             if (wasPlaying) pl.play()
         } catch (e: CancellationException) {
             throw e

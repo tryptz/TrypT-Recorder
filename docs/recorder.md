@@ -498,6 +498,31 @@ into a draft. Preview and picture exports analyze the processed Master signal
 and use the resulting values by timeline timestamp. That first pass adds time
 when the audio or links change, and the app reuses recent analyses in memory.
 
+- **The Adjust slider is the base a link moves around.** A linked brightness,
+  contrast or saturation is the look's own slider value plus the link's
+  movement, held to the control's -1..1 range (`MusicLinkTimeline.linked`);
+  exposure, which has no slider in the look, moves around 0. The static
+  effect leaves a linked control out, and `MusicGrade` applies it once, the
+  same in preview and export.
+- **Pause when silent** (on by default): once the followed band has been
+  below -70 dB for 2 s the link goes to rest — lowest for Up, highest for
+  Down, the middle for Both — instead of drifting on the follower's tail;
+  the first sound after that wakes it.
+- **The analysis encodes nothing.** It runs through Media3's analyzer mode
+  (`ExperimentalAnalyzerModeFactory`): the whole audio pipeline and mixer
+  run and are measured, but the encoder drops its input and the muxer writes
+  no file.
+- **One analysis per sound.** It is keyed by the audio-only plan (with the
+  mixer, since the links follow the mixed Master — only switched-off effects
+  and effect ids are left out) and the links. The preview and an export
+  asking for the same key share one run; it keeps running for 3 s after its
+  last waiter gives up, because starting an export stops the preview's wait
+  just before the export asks. A failed analysis is remembered, and the
+  preview plays without it rather than starting it again on every rebuild
+  (an export still tries). A change to the mix alone keeps the player: the
+  live mixer plays it at once, the links are measured again in the
+  background, and the player is rebuilt once when that is done.
+
 ## Not verified on a device yet
 
 Everything above compiles, lints clean and passes its JVM tests, and the release

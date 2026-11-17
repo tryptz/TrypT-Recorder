@@ -220,6 +220,20 @@ class MusicLinkFollower(shape: LinkShape) {
         return valueFor(strength, avg, s, program)
     }
 
+    /**
+     * [step], but while [asleep] the setting is at rest — where it sits with
+     * no band at all — rather than wherever the follower's tail left it. The
+     * band is still measured, so the first sound after the silence wakes it.
+     * This is what [LinkShape.pauseWhenSilent] means for an offline analysis.
+     */
+    fun follow(bandDb: Float, dt: Float): Float {
+        val value = step(bandDb, dt)
+        return if (asleep) restValue() else value
+    }
+
+    /** The setting with no band and its average at zero: lowest for Up, highest for Down, the middle for Both. */
+    fun restValue(): Float = valueFor(0f, 0f, shape, program)
+
     companion object {
         /** How many dB above the floor counts as "full", at most: less when the band swings less. */
         const val RANGE_DB = 12f

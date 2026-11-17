@@ -310,6 +310,7 @@ object CompositionFactory {
                 out += Contrast(0.12f)
             }
         }
+        // A control a music link follows is drawn by MusicGrade instead, with this value as its base.
         out += adjustments(
             if (music?.contains(RecorderLinkTarget.BRIGHTNESS) == true) 0f else v.brightness,
             if (music?.contains(RecorderLinkTarget.CONTRAST) == true) 0f else v.contrast,
@@ -335,7 +336,7 @@ object CompositionFactory {
     }
 
     private fun finishingEffects(v: PlannedVisuals, music: MusicLinkTimeline?): List<Effect> = buildList {
-        music?.let { add(MusicGrade(it)) }
+        music?.let { add(MusicGrade(it, v.brightness, v.contrast, v.saturation)) }
         v.grain?.let { add(FilmGrain(it)) }
         if (v.fadeInUs > 0 || v.fadeOutUs > 0) add(FadeToBlack(v.fadeInUs, v.fadeOutUs, v.totalUs))
         if (v.texts.isNotEmpty()) add(OverlayEffect(v.texts.map { TimedText(it) }))
