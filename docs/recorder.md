@@ -12,8 +12,12 @@ repository; this repository is its standalone home.
 ./gradlew :recorder:testDebugUnitTest    # 239 JVM tests, no device
 ./gradlew :recorder:lintDebug            # clean: 0 errors, 0 warnings
 ./gradlew :recorder:assembleDebug        # signed with the committed recorder/debug.keystore
-./gradlew :recorder:assembleRelease      # R8-minified, ~10 MB
+./gradlew :recorder:assembleRelease      # R8-minified, ~7.5 MB
 ```
+
+The app is in English only, and the build keeps only English resources
+(`androidResources.localeFilters`): AndroidX libraries carry their strings in
+89 locales, which made up 280 KB of `resources.arsc`.
 
 The audio mixer builds with Android NDK 28.2.13676358 and CMake 3.22.1.
 The pinned DSP source is included, so a checkout needs no submodule setup.

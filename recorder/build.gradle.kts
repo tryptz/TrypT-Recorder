@@ -47,6 +47,12 @@ android {
         versionName = "2.0.0-preview.10"
     }
 
+    // The app is in English only, but AndroidX libraries bring their strings
+    // in 89 locales, all of which went into resources.arsc.
+    androidResources {
+        localeFilters += "en"
+    }
+
     signingConfigs {
         getByName("debug") {
             storeFile = file("debug.keystore")
