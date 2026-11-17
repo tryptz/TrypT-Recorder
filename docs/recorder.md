@@ -247,6 +247,12 @@ Android/Media3 layers only carry them out.
   recomposition); the timer ticks on the second; hidden, nothing runs.
 - **Volume above 100 %** uses `VolumeEnvelope`, not Media3's `GainProcessor`,
   which is specified for [0, 1] and wraps 16-bit samples above that.
+- **A speed ramp is sixteen steady steps** between two keys (`ClipTiming`),
+  so the audio sees a bounded number of speed changes. The first step plays
+  at the first key's rate and the last at the second key's: a key on the
+  trim's end starts nothing, and with evenly spaced steps a 0.5×→2× ramp
+  to the end of a clip used to stop at 1.91×. The *Ramp up* / *Ramp down*
+  buttons go from half the clip's speed to twice it, within 0.25×–4×.
 - **The crop is stored in the source's orientation, dragged in the
   picture's.** `CropInsets` are cut from the source before it is turned or
   mirrored, because that is where Media3's Crop runs. The box the user drags

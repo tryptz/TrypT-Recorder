@@ -34,6 +34,8 @@ import tf.monochrome.recorder.editor.model.cutToAngle
 import tf.monochrome.recorder.editor.model.detachAudio
 import tf.monochrome.recorder.editor.model.rippleDelete
 import tf.monochrome.recorder.editor.model.setOverlayLayer
+import tf.monochrome.recorder.editor.model.rampClip
+import tf.monochrome.recorder.editor.model.rampRates
 import tf.monochrome.recorder.editor.model.setSpeedRamp
 import tf.monochrome.recorder.editor.model.sourceAt
 import tf.monochrome.recorder.editor.model.splitAt
@@ -50,7 +52,7 @@ class ProEditorTest {
         val ramped = p.setSpeedRamp(id, listOf(SpeedKey(0, 0.5f), SpeedKey(8 * SEC, 2f)))
         val clip = ramped.clips.single()
         assertEquals(0.5f, clip.timing.rateAt(0), 0f)
-        assertEquals(2f, clip.timing.peakRate, 0.1f)
+        assertEquals(2f, clip.timing.peakRate, 0f)
         val cutAt = 4 * SEC
         val sourceAtCut = clip.sourceAt(cutAt)
         val split = ramped.splitAt(cutAt)
@@ -61,6 +63,31 @@ class ProEditorTest {
         assertEquals(clip.durationUs, detached.audio.single().durationUs)
         val plan = (ExportPlanner.plan(detached, ExportSettings()) as PlanResult.Ok).plan
         assertEquals(clip.speedKeys, (plan.lanes.single().single() as Segment.Media).media.speedKeys)
+    }
+
+    @Test fun aRampToTheEndOfAClipReachesItsEndRateThere() {
+        val p = project(video("video", 8))
+        val clip = p.clips.single()
+        for ((from, to) in listOf(0.5f to 2f, 2f to 0.5f, 1f to 4f)) {
+            val timing = p.rampClip(clip, from, to).clips.single().timing
+            assertEquals(from, timing.rateAt(clip.trimStartUs), 0f)
+            // The last stretch plays at the end rate, not one step short of it.
+            assertEquals(to, timing.rateAt(clip.trimEndUs - 1), 0f)
+            assertEquals(maxOf(from, to), timing.peakRate, 0f)
+            assertEquals(minOf(from, to), timing.lowestRate, 0f)
+            // Sixteen equal stretches of source, at evenly spaced rates from one end to the other.
+            val stretch = clip.sourceSpanUs / 16.0
+            val expected = (0 until 16).sumOf { k -> stretch / (from + (to - from) * k / 15.0) }
+            assertTrue(abs(expected - timing.durationUs) <= 2)
+        }
+    }
+
+    @Test fun rampButtonsFollowTheClipsSpeedWithinTheEditorsSpeeds() {
+        assertEquals(0.5f to 2f, rampRates(1f))
+        assertEquals(1f to 4f, rampRates(2f))
+        assertEquals(1.5f to 4f, rampRates(3f))
+        assertEquals(0.25f to 0.5f, rampRates(0.25f))
+        assertEquals(0.25f to 1f, rampRates(0.5f))
     }
 
     @Test fun alternatePictureKeepsOriginalAudioAndUsesSynchronizedSourceTime() {

@@ -45,6 +45,8 @@ import tf.monochrome.recorder.editor.model.VideoClip
 import tf.monochrome.recorder.editor.model.clipStartUs
 import tf.monochrome.recorder.editor.model.rippleDelete
 import tf.monochrome.recorder.editor.model.rollCut
+import tf.monochrome.recorder.editor.model.rampClip
+import tf.monochrome.recorder.editor.model.rampRates
 import tf.monochrome.recorder.editor.model.setSpeedRamp
 import tf.monochrome.recorder.editor.model.slipClip
 import tf.monochrome.recorder.editor.model.sourceAt
@@ -61,11 +63,11 @@ fun RampPanel(vm: EditorViewModel, project: Project, clip: VideoClip, playheadUs
         ?.takeIf { abs(it.sourceUs - sourceUs) <= 5_000 }
     Text(stringResource(R.string.pro_ramp_help))
     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        listOf(R.string.pro_ramp_up to (0.5f to 2f), R.string.pro_ramp_down to (2f to 0.5f)).forEach { (label, rates) ->
+        // Around the speed the clip plays at: half of it to twice it.
+        val (slow, fast) = rampRates(clip.speed)
+        listOf(R.string.pro_ramp_up to (slow to fast), R.string.pro_ramp_down to (fast to slow)).forEach { (label, rates) ->
             OutlinedButton(onClick = {
-                vm.edit { it.setSpeedRamp(clip.id, listOf(
-                    SpeedKey(clip.trimStartUs, rates.first), SpeedKey(clip.trimEndUs, rates.second),
-                )) }
+                vm.edit { it.rampClip(clip, rates.first, rates.second) }
             }) { Text(stringResource(label)) }
         }
         if (clip.speedKeys.isNotEmpty()) {

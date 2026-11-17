@@ -23,11 +23,15 @@ class ClipTiming(
             keysByTime.forEachIndexed { index, key ->
                 add(key)
                 val next = keysByTime.getOrNull(index + 1) ?: return@forEachIndexed
-                // A finite number of changes per pair keeps audio processing bounded.
+                // A finite number of changes per pair keeps audio processing bounded:
+                // RAMP_STEPS equal stretches, the first at this key's rate and the
+                // last at the next key's. The last stretch must already be at the
+                // next rate — a key at the trim's end starts nothing, so a ramp to
+                // the end would otherwise stop one step short of where it was going.
                 for (step in 1 until RAMP_STEPS) {
                     val t = key.sourceUs + (next.sourceUs - key.sourceUs) * step / RAMP_STEPS
                     if (t > last().sourceUs && t < next.sourceUs) {
-                        val fraction = (t - key.sourceUs).toDouble() / (next.sourceUs - key.sourceUs)
+                        val fraction = step.toDouble() / (RAMP_STEPS - 1)
                         add(SpeedKey(t, (key.rate + (next.rate - key.rate) * fraction).toFloat()))
                     }
                 }
@@ -81,6 +85,20 @@ class ClipTiming(
         const val RAMP_STEPS = 16
     }
 }
+
+/**
+ * The ramp buttons' two rates for a clip playing at [speed]: half of it to
+ * twice it, each held inside the editor's speeds. Ramp up goes first to
+ * second, ramp down second to first.
+ */
+fun rampRates(speed: Float): Pair<Float, Float> {
+    val s = if (speed.isFinite()) speed.coerceIn(SPEEDS.first(), SPEEDS.last()) else 1f
+    return (s / 2f).coerceIn(SPEEDS.first(), SPEEDS.last()) to (s * 2f).coerceIn(SPEEDS.first(), SPEEDS.last())
+}
+
+/** A ramp across the whole of [clip]: [from] at its first frame to [to] at its last. */
+fun Project.rampClip(clip: VideoClip, from: Float, to: Float): Project =
+    setSpeedRamp(clip.id, listOf(SpeedKey(clip.trimStartUs, from), SpeedKey(clip.trimEndUs, to)))
 
 fun Project.setSpeedRamp(id: String, keys: List<SpeedKey>): Project = copy(
     clips = clips.map { clip ->
