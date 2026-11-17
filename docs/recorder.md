@@ -9,7 +9,7 @@ repository; this repository is its standalone home.
 ## Build and test
 
 ```
-./gradlew :recorder:testDebugUnitTest    # 209 JVM tests, no device
+./gradlew :recorder:testDebugUnitTest    # 239 JVM tests, no device
 ./gradlew :recorder:lintDebug            # clean: 0 errors, 0 warnings
 ./gradlew :recorder:assembleDebug        # signed with the committed recorder/debug.keystore
 ./gradlew :recorder:assembleRelease      # R8-minified, ~10 MB
@@ -65,7 +65,8 @@ The signer's SHA-256 must start `80:11:86:31`.
   the video.
 - Saved to `Movies/TryptifyRecorder` through MediaStore (pending until finished,
   so galleries never show half a file). A "saved" notification offers Edit and
-  Share.
+  Share. A recording stops and saves itself when free storage falls below
+  200 MB ("Storage almost full"), and does not start below that.
 
 **File details** — read back from the file itself, not from the settings:
 container, duration, size and overall bitrate; video codec with H.264 profile
@@ -145,9 +146,11 @@ recorder/src/main/java/tf/monochrome/recorder/
 ```
 
 The rule that keeps it testable without a phone: decisions live in pure Kotlin
-(`CapturePlanner`, `PauseClock`, `Pcm`, `Timeline`, `History`,
-`ExportPlanner`, `FrameRetimer`, `CropBox`, `Grain`, and for GIFs
-`FrameSampler`, `YuvFrame`, `GifPalette`, `GifEncoder`), and the Android/Media3 layers only carry them out.
+(`CapturePlanner`, `PauseClock`, `Pcm`, `AudioTimeline`, `SessionKeys`,
+`ButtonVisibility`, `StorageGuard`, `CleanupRules`, `BundleValidation`,
+`Timeline`, `History`, `ExportPlanner`, `FrameRetimer`, `CropBox`, `Grain`,
+and for GIFs `FrameSampler`, `YuvFrame`, `GifPalette`, `GifEncoder`), and the
+Android/Media3 layers only carry them out.
 
 ### Why things are the way they are
 
@@ -194,6 +197,50 @@ The rule that keeps it testable without a phone: decisions live in pure Kotlin
 - **Mic + device audio** run off different clocks. The mic is the master; device
   audio goes through a bounded FIFO that pads underruns with silence and drops
   the oldest samples on overrun, so latency cannot creep.
+- **Audio is stamped by counting samples, and checked against the clock**
+  (`AudioTimeline`). Counting is exact until samples go missing (the pump held
+  up past the capture buffer) or the audio clock drifts from the monotonic one
+  (tens of ppm: hundreds of ms over hours); either shifts all later sound. A
+  block cannot be read before it was captured, so a stamp more than 30 ms
+  after `now − block length` is impossible: frames are dropped from the block
+  until it fits. A stamp more than 30 ms *before* it for every block of a
+  window longer than the capture buffer means samples were lost: that much
+  silence is encoded first. The window is what keeps a backlog read after a
+  short stall (late, nothing lost) from counting. The stream stays
+  continuous rather than jumping, since players that clock from the audio
+  smooth over jumps. Capture buffers are half a second (were ~80 ms), falling
+  back to the old size if a device refuses.
+- **Setup and saving are off the main thread.** The service takes the
+  projection and registers its callback on main, in that order (Android 14);
+  encoder queries, the MediaStore row, codecs, AudioRecord and the
+  VirtualDisplay are set up on IO, and a start that is cancelled meanwhile is
+  torn down when it lands. Stopping (up to 3 s per worker join) and publishing
+  run in `RecorderApp.appScope`, so a save started by `onDestroy` still
+  finishes. A worker that outlives its join cannot write any more: the muxer
+  gate is closed under its lock, and a failure after stop() is not reported.
+- **The encoder whose limits were checked is the one used.** `EncoderFit`
+  returns each size/rate with the codec name that supports it, and the
+  recorder creates it by name; creating by type could pick another codec. If
+  configure() still refuses, the next size is tried (up to six).
+- **Edit-ready stems are written on their own thread**, from a bounded queue
+  (~2.7 s). The pump only copies into it, so a slow disk never holds up the
+  AAC encoder; if it overflows, that stem is dropped and the recording keeps
+  its mixed track. A stem that reaches the WAV limit (4 GiB, ~6 h 13 min)
+  ends there as a valid file, flagged `truncated`, and the editor then uses
+  the mixed track. Session folders are named after the MediaStore row id
+  (`capture-sessions/m<id>`): the recorder's `external_primary` URI and the
+  library's `external` one name the same row. Older folders (a hash of the
+  URI) are still found. Deleting a recording deletes its folder.
+- **Leftovers are swept at start** (`StorageSweep`, off main): this app's own
+  pending rows from a process that died mid-write (unplayable — MediaMuxer
+  writes the index last) unless an export queued for a retry still writes
+  into one, and session folders whose recording is gone. Nothing is deleted
+  if a query fails.
+- **The floating button changes the screen as little as it can**: the screen
+  sends a frame only when something changes, so a pulse redrawn every vsync
+  turned a still screen into a full-rate recording. The ring pulses only
+  while recording, ten steps a second, read in the draw phase (no
+  recomposition); the timer ticks on the second; hidden, nothing runs.
 - **Volume above 100 %** uses `VolumeEnvelope`, not Media3's `GainProcessor`,
   which is specified for [0, 1] and wraps 16-bit samples above that.
 - **The crop is stored in the source's orientation, dragged in the
@@ -451,6 +498,27 @@ emulator, so none of it has run on a phone. Before a release, check at least:
       lists scroll smoothly with many glass cards on screen.
 - [ ] Crash report: after a crash (or a freeze), Settings shows *Last crash*
       and *Share report* sends it.
+- [ ] Setup off the main thread: start from the app, the floating button
+      (countdown 0 and 3, "hide while recording" on and off), the tile and
+      the notification on Android 10, 13 and 14+; cancel during the countdown
+      and right after it — no stray recording, button back on screen.
+- [ ] Storage: fill the phone to ~250 MB free and record — it stops and saves
+      with "Storage almost full", and the file plays.
+- [ ] Audio clock: an hour-long recording with a game, and one with the CPU
+      busy (exporting meanwhile): A/V sync at the end; logcat
+      `ScreenRecorder` "audio behind the clock" only after a real stall.
+- [ ] Edit-ready: record with it on, open the recording *from the Library* —
+      stems and markers are there; delete the recording — its
+      `capture-sessions/m<id>` folder goes; kill the app mid-recording,
+      reopen — no pending file left in `Movies/TryptifyRecorder`.
+- [ ] Floating button while recording a still screen: the file's frame rate
+      stays low (a media-info app), and the ring pulses.
+- [ ] Android 10: delete and rename a recording from a previous install
+      (consent dialog, then it happens).
+- [ ] Bundle: export and cancel mid-way — no partial `.zip` left; import a
+      bundle zipped with a `media/` folder entry.
+- [ ] Backup: `adb shell bmgr backupnow` then restore — settings and drafts
+      come back; stems, bundles, music and the crash report do not.
 
 **Look.** Material You: on Android 12+ the accent and its tones come from the
 wallpaper (`dynamicDarkColorScheme`), on a near-black ground kept for video;
