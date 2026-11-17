@@ -212,10 +212,16 @@ object CompositionFactory {
             ),
             emptyList(),
             routesAudio = true,
+            silent = true,
         )
     }
 
-    private fun item(m: PlannedMedia, videoEffects: List<Effect>, routesAudio: Boolean = false): EditedMediaItem {
+    private fun item(
+        m: PlannedMedia,
+        videoEffects: List<Effect>,
+        routesAudio: Boolean = false,
+        silent: Boolean = false,
+    ): EditedMediaItem {
         val clipping = MediaItem.ClippingConfiguration.Builder()
             .setStartPositionUs(m.clipStartUs)
             // Up to the end of the file: let the file say where that is, rather
@@ -229,7 +235,9 @@ object CompositionFactory {
                     add(VolumeEnvelope(m.gain, m.fadeInUs, m.fadeOutUs, m.durationUs))
                 }
                 add(SonicAudioProcessor().apply { setOutputSampleRateHz(MIX_SAMPLE_RATE) })
-                add(RouteAudio(m.role))
+                // A gap's silence file, or an item whose sound is removed (Media3 feeds it
+                // silence): nothing to route, so the router only writes zeros.
+                add(RouteAudio(m.role, silent = silent || m.removeAudio))
             }
         }
         return EditedMediaItem.Builder(mediaItem)

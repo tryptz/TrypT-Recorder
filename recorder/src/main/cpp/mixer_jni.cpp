@@ -69,3 +69,56 @@ extern "C" JNIEXPORT void JNICALL JNI_METHOD(render)(
         reinterpret_cast<const float*>(data + offset), dest, frames, gains, fxEnabled, levels);
     env->SetFloatArrayRegion(peaks, 0, recorder::kBuses * 2, levels);
 }
+
+// ── Chains built off the audio thread ─────────────────────────────────────
+// RecorderAudioMixer builds a changed effect chain on a worker thread
+// (prepareChain), swaps it in on the audio thread (installChain: a pointer
+// swap, nothing allocated or freed there) and frees the swapped-out effects
+// back on the worker (destroyChain).
+
+extern "C" JNIEXPORT jlong JNICALL JNI_METHOD(prepareChain)(
+    JNIEnv* env, jobject, jint sampleRate, jintArray types, jfloatArray parameters, jintArray counts,
+    jfloatArray wets, jintArray oversampling) {
+    if (sampleRate <= 0 || types == nullptr || parameters == nullptr || counts == nullptr ||
+        wets == nullptr || oversampling == nullptr) {
+        return 0;
+    }
+    const jsize effects = env->GetArrayLength(types);
+    if (env->GetArrayLength(counts) != effects || env->GetArrayLength(wets) != effects ||
+        env->GetArrayLength(oversampling) != effects) {
+        return 0;
+    }
+    std::vector<jint> kind(effects), count(effects), factor(effects);
+    std::vector<jfloat> wet(effects);
+    if (effects > 0) {
+        env->GetIntArrayRegion(types, 0, effects, kind.data());
+        env->GetIntArrayRegion(counts, 0, effects, count.data());
+        env->GetFloatArrayRegion(wets, 0, effects, wet.data());
+        env->GetIntArrayRegion(oversampling, 0, effects, factor.data());
+    }
+    const jsize total = env->GetArrayLength(parameters);
+    jlong needed = 0;
+    for (jint c : count) {
+        if (c < 0) return 0;
+        needed += c;
+    }
+    if (needed != total) return 0;
+    std::vector<jfloat> values(total);
+    if (total > 0) env->GetFloatArrayRegion(parameters, 0, total, values.data());
+    auto chain = std::make_unique<recorder::FxChain>();
+    jsize at = 0;
+    for (jsize i = 0; i < effects; ++i) {
+        chain->append(kind[i], values.data() + at, count[i], std::clamp(wet[i], 0.f, 1.f), sampleRate, factor[i]);
+        at += count[i];
+    }
+    return reinterpret_cast<jlong>(chain.release());
+}
+
+extern "C" JNIEXPORT void JNICALL JNI_METHOD(installChain)(JNIEnv*, jobject, jlong handle, jint bus, jlong chain) {
+    if (handle == 0 || chain == 0 || !validBus(bus)) return;
+    graphOf(handle)->chains[bus].swapEffects(*reinterpret_cast<recorder::FxChain*>(chain));
+}
+
+extern "C" JNIEXPORT void JNICALL JNI_METHOD(destroyChain)(JNIEnv*, jobject, jlong chain) {
+    delete reinterpret_cast<recorder::FxChain*>(chain);
+}

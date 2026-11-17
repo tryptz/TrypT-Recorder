@@ -73,6 +73,13 @@ public:
 
     void clear() { effects_.clear(); }
 
+    // Trades effects with a chain built on another thread: a pointer swap, so
+    // the audio thread neither allocates nor frees (mixer_jni.cpp installChain).
+    void swapEffects(FxChain& other) noexcept {
+        effects_.swap(other.effects_);
+        std::swap(sampleRate_, other.sampleRate_);
+    }
+
     int size() const { return static_cast<int>(effects_.size()); }
 
     void setParameter(int effect, int parameter, float value) {

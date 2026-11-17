@@ -413,6 +413,19 @@ its fader and pan. The role outputs sum into Master, which has its own inserts,
 pan and fader. Stereo peak meters read the actual post-fader samples. The mixer
 hands the final stereo PCM to both preview and export.
 
+Nothing that allocates runs on Media3's audio thread. The mixer's settings
+are worked out once, by whoever sets them (`MixerSnapshot`: per-bus effect
+values, gain and pan). A change of value is sent to the running effect in
+place. A change to a chain's make-up — an effect added, removed, moved or
+re-oversampled — is built as a new native chain on a worker thread
+(`prepareChain`) the moment the settings change; the audio thread swaps it
+in (`installChain`, a pointer swap) and hands the old effects back to the
+worker to free. A chain the worker has not delivered within 200 callbacks
+is built in place, as before, so a change can never be lost. `RouteAudio`
+reads its mixing coefficients once per format, moves samples in bulk with
+the other roles' channels left as zeros, and does not read a gap's silence
+file (or an item whose sound is removed) at all.
+
 Media3 1.10.1 gap items cannot carry audio processors, so routed audio uses a
 seekable sparse PCM file for silence. The same stereo pair mapping works when
 audio begins after a gap, when a video clip is muted and when a video overlay
