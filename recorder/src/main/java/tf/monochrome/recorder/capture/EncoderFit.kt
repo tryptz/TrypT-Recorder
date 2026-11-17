@@ -39,19 +39,30 @@ object EncoderFit {
             // would keep inventing frames stamped inside the pause.
         }
 
-    fun fit(plan: VideoPlan, quality: QualityPreset): VideoPlan {
-        val caps = avcEncoderCaps() ?: return plan
-        val candidates = listOf(plan) + CapturePlanner.fallbacks(plan, quality)
-        for (c in candidates) {
-            val aligned = align(c, caps)
-            if (supports(caps, aligned)) {
-                val bitrate = aligned.bitrate.coerceIn(caps.bitrateRange.lower, caps.bitrateRange.upper)
-                if (aligned != plan) Log.i(TAG, "encoder fit: ${plan.width}x${plan.height}@${plan.fps} -> ${aligned.width}x${aligned.height}@${aligned.fps}")
-                return aligned.copy(bitrate = bitrate)
-            }
+    /**
+     * The sizes/rates to try, best first, each with the encoder that said it
+     * supports them. The recorder creates that encoder *by name*: creating
+     * "the" AVC encoder by type can pick a different codec from the one whose
+     * limits were checked here. If configure() still refuses one, the
+     * recorder moves on to the next.
+     */
+    fun fit(plan: VideoPlan, quality: QualityPreset): List<VideoEncoderChoice> {
+        val (name, caps) = avcEncoder() ?: return listOf(VideoEncoderChoice(plan, null))
+        val choices = (listOf(plan) + CapturePlanner.fallbacks(plan, quality))
+            .map { align(it, caps) }
+            .filter { supports(caps, it) }
+            .map { it.copy(bitrate = it.bitrate.coerceIn(caps.bitrateRange.lower, caps.bitrateRange.upper)) }
+            .distinct()
+            .map { VideoEncoderChoice(it, name) }
+        if (choices.isEmpty()) {
+            Log.w(TAG, "no candidate reported supported by $name; trying the request as-is")
+            return listOf(VideoEncoderChoice(plan, name))
         }
-        Log.w(TAG, "no candidate reported supported; trying the request as-is")
-        return plan
+        val first = choices.first().plan
+        if (first.width != plan.width || first.height != plan.height || first.fps != plan.fps) {
+            Log.i(TAG, "encoder fit ($name): ${plan.width}x${plan.height}@${plan.fps} -> ${first.width}x${first.height}@${first.fps}")
+        }
+        return choices
     }
 
     private fun align(plan: VideoPlan, caps: MediaCodecInfo.VideoCapabilities) = plan.copy(
@@ -111,13 +122,16 @@ object EncoderFit {
             if (cbr) setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
         }
 
-    private fun avcEncoderCaps(): MediaCodecInfo.VideoCapabilities? =
-        encoderCaps(MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, 1280, 720), MediaFormat.MIMETYPE_VIDEO_AVC)
-            ?.videoCapabilities
-
-    private fun encoderCaps(format: MediaFormat, mime: String): MediaCodecInfo.CodecCapabilities? = runCatching {
+    /** The AVC encoder the platform would pick for a typical capture, and its limits. */
+    private fun avcEncoder(): Pair<String, MediaCodecInfo.VideoCapabilities>? = runCatching {
         val list = MediaCodecList(MediaCodecList.REGULAR_CODECS)
+        val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, 1280, 720)
         val name = list.findEncoderForFormat(format) ?: return@runCatching null
-        list.codecInfos.first { it.name == name }.getCapabilitiesForType(mime)
+        val caps = list.codecInfos.first { it.name == name }
+            .getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC).videoCapabilities ?: return@runCatching null
+        name to caps
     }.getOrNull()
 }
+
+/** A size/rate and the encoder, by name, that reported supporting it (null: let the platform choose). */
+data class VideoEncoderChoice(val plan: VideoPlan, val codecName: String?)

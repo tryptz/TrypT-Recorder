@@ -25,7 +25,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /** Everything a capture is configured with, decided before it starts. */
 data class CaptureSpec(
-    val video: VideoPlan,
+    /** What to try, best first ([EncoderFit.fit]); never empty. */
+    val video: List<VideoEncoderChoice>,
     val densityDpi: Int,
     val audio: AudioSource,
 )
@@ -49,6 +50,8 @@ data class CaptureSpec(
  *    start) the file is written without it instead of not at all.
  *  - Size, frame rate and bitrate come from settings ([CapturePlanner] and
  *    [EncoderFit]) rather than always being the panel's native mode.
+ *  - Audio is stamped by sample count but kept on the monotonic clock
+ *    ([AudioTimeline]): lost samples come back as silence, drift is trimmed.
  *
  * Caveat inherited from the original: apps can opt out of playback capture,
  * and audio that bypasses AudioFlinger cannot be captured at all.
@@ -58,8 +61,11 @@ class ScreenRecorder(
     private val spec: CaptureSpec,
     private val session: EditReadySession? = null,
 ) {
-    /** Called at most once, from a worker thread, if the capture fails while running. */
-    var onFatalError: ((Throwable) -> Unit)? = null
+    /**
+     * Called at most once, from a worker thread, if the capture fails while
+     * running. Cleared by [stop], so teardown never reports itself as a failure.
+     */
+    @Volatile var onFatalError: ((Throwable) -> Unit)? = null
 
     private val running = AtomicBoolean(false)
     private val failed = AtomicBoolean(false)
@@ -77,6 +83,8 @@ class ScreenRecorder(
     private var videoThread: Thread? = null
     private var audioPumpThread: Thread? = null
     private var audioDrainThread: Thread? = null
+    /** Blocks the audio clock looks back over; set from the capture buffers' real size. */
+    private var timelineWindowBlocks = 48
 
     /** The audio actually being recorded — less than asked for if a source failed to open. */
     var effectiveAudio: AudioSource = AudioSource.NONE
@@ -88,15 +96,15 @@ class ScreenRecorder(
 
     val isPaused: Boolean get() = clock.isPaused
 
+    /** A worker thread has failed; [onFatalError] was (or, if set late, would have been) called. */
+    val hasFailed: Boolean get() = failed.get()
+
     /**
      * Starts capturing into [fd]. [audioPermitted] is whether RECORD_AUDIO is
      * granted; without it every audio source degrades to none.
      */
     fun start(fd: FileDescriptor, audioPermitted: Boolean) {
         check(running.compareAndSet(false, true)) { "already recording" }
-        val v = spec.video
-        Log.i(TAG, "capture ${v.width}x${v.height}@${v.fps} ${v.bitrate / 1000} kbps audio=${spec.audio}")
-
         openAudio(if (audioPermitted) spec.audio else AudioSource.NONE)
         session?.expect(effectiveAudio.usesDevice, effectiveAudio.usesMic)
 
@@ -106,20 +114,14 @@ class ScreenRecorder(
         gate = g
 
         // ── Video ───────────────────────────────────────────────────────
-        val vCodec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
-        try {
-            vCodec.configure(EncoderFit.videoFormat(v, realtime = true), null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-        } catch (e: Exception) {
-            // Some encoders refuse the real-time/operating-rate hints at high
-            // frame rates while accepting the format itself.
-            Log.w(TAG, "encoder refused real-time hints; configuring without them", e)
-            vCodec.reset()
-            vCodec.configure(EncoderFit.videoFormat(v, realtime = false), null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-        }
+        // Every codec is in a field from the moment it exists, so a start
+        // that fails part-way is fully released by stop().
+        val v = openVideoEncoder()
+        val vCodec = checkNotNull(videoCodec)
+        Log.i(TAG, "capture ${v.width}x${v.height}@${v.fps} ${v.bitrate / 1000} kbps audio=${spec.audio}")
         val surface = vCodec.createInputSurface()
-        vCodec.start()
-        videoCodec = vCodec
         inputSurface = surface
+        vCodec.start()
 
         virtualDisplay = projection.createVirtualDisplay(
             "tryptify-recorder", v.width, v.height, spec.densityDpi,
@@ -133,6 +135,7 @@ class ScreenRecorder(
             val aac = EncoderFit.aacEncoder(AUDIO_BITRATE, SAMPLE_RATE, 2)
             val aCodec = aac.name?.let { MediaCodec.createByCodecName(it) }
                 ?: MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
+            audioCodec = aCodec
             val inputSize = BLOCK_FRAMES * 4 * 2
             try {
                 aCodec.configure(
@@ -150,11 +153,55 @@ class ScreenRecorder(
             }
             audioBitrate = aac.bitrate
             aCodec.start()
-            audioCodec = aCodec
+            // The "consistently behind" window must outlast the largest capture buffer.
+            val bufferFrames = listOfNotNull(deviceRecord, micRecord).maxOf { it.bufferSizeInFrames }
+            timelineWindowBlocks = ((bufferFrames + SAMPLE_RATE / 2) / BLOCK_FRAMES + 1).coerceAtLeast(24)
             deviceRecord?.startRecording()
             micRecord?.startRecording()
             audioPumpThread = Thread({ audioPumpLoop(aCodec) }, "rec-apump").also { it.start() }
             audioDrainThread = Thread({ drainLoop(aCodec, isVideo = false, g) }, "rec-adrain").also { it.start() }
+        }
+    }
+
+    /**
+     * Creates and configures the first encoder choice that accepts its
+     * format, by name ([EncoderFit.fit]). Leaves it in [videoCodec].
+     */
+    private fun openVideoEncoder(): VideoPlan {
+        var last: Exception? = null
+        for (choice in spec.video.take(MAX_ENCODER_ATTEMPTS)) {
+            val codec = try {
+                choice.codecName?.let { MediaCodec.createByCodecName(it) }
+                    ?: MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+            } catch (e: Exception) {
+                Log.w(TAG, "cannot create ${choice.codecName ?: "the AVC encoder"}", e)
+                last = e
+                continue
+            }
+            videoCodec = codec
+            try {
+                configureVideo(codec, choice.plan)
+                return choice.plan
+            } catch (e: Exception) {
+                val p = choice.plan
+                Log.w(TAG, "${choice.codecName} refused ${p.width}x${p.height}@${p.fps}; trying the next size", e)
+                last = e
+                videoCodec = null
+                runCatching { codec.release() }
+            }
+        }
+        throw last ?: IllegalStateException("no video encoder")
+    }
+
+    private fun configureVideo(codec: MediaCodec, plan: VideoPlan) {
+        try {
+            codec.configure(EncoderFit.videoFormat(plan, realtime = true), null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+        } catch (e: Exception) {
+            // Some encoders refuse the real-time/operating-rate hints at high
+            // frame rates while accepting the format itself.
+            Log.w(TAG, "encoder refused real-time hints; configuring without them", e)
+            codec.reset()
+            codec.configure(EncoderFit.videoFormat(plan, realtime = false), null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
         }
     }
 
@@ -164,13 +211,23 @@ class ScreenRecorder(
         return true
     }
 
+    /**
+     * Finishes the edit-ready extras once the file's fate is known. If the
+     * audio pump or the stem writer outlived stop()'s wait, the stems are
+     * dropped (deleted as soon as the writer lets go) rather than left behind.
+     */
     fun finishSession(published: Boolean) {
         val current = session ?: return
+        val pumpDone = audioPumpThread?.isAlive != true
+        val audioDone = pumpDone && current.awaitWriter(JOIN_MS)
         val origin = gate?.originUs()
         if (published && origin != null) {
-            runCatching { current.publish(origin, audioPumpThread?.isAlive != true) }
-                .onFailure { Log.w(TAG, "save edit-ready session", it) }
-        } else if (audioPumpThread?.isAlive != true) {
+            runCatching { current.publish(origin, audioDone) }
+                .onFailure {
+                    Log.w(TAG, "save edit-ready session", it)
+                    current.discard()
+                }
+        } else {
             current.discard()
         }
     }
@@ -200,15 +257,19 @@ class ScreenRecorder(
      */
     fun stop(): Boolean {
         if (!running.compareAndSet(true, false)) return false
+        // From here on a worker thread failing is teardown, not a failed recording.
+        onFatalError = null
         // Video EOS via the surface; audio EOS via the pump thread.
         runCatching { virtualDisplay?.release() }
         runCatching { videoCodec?.signalEndOfInputStream() }
         runCatching { deviceRecord?.stop() }
         runCatching { micRecord?.stop() }
-        videoThread?.join(3000)
-        audioPumpThread?.join(3000)
-        audioDrainThread?.join(3000)
+        videoThread?.join(JOIN_MS)
+        audioPumpThread?.join(JOIN_MS)
+        audioDrainThread?.join(JOIN_MS)
 
+        // Closes the gate under its lock: a drain thread that outlived the
+        // joins has its late samples dropped, not written to a released muxer.
         val wroteVideo = gate?.finish() ?: false
         runCatching { muxer?.release() }
         muxer = null
@@ -245,12 +306,16 @@ class ScreenRecorder(
             .addMatchingUsage(AudioAttributes.USAGE_GAME)
             .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
             .build()
-        AudioRecord.Builder()
-            .setAudioPlaybackCaptureConfig(config)
-            .setAudioFormat(pcmFormat(AudioFormat.CHANNEL_IN_STEREO))
-            .setBufferSizeInBytes(minBuffer(AudioFormat.CHANNEL_IN_STEREO) * 4)
-            .build()
-            .initializedOrNull()
+        bufferSizes(AudioFormat.CHANNEL_IN_STEREO).firstNotNullOfOrNull { size ->
+            runCatching {
+                AudioRecord.Builder()
+                    .setAudioPlaybackCaptureConfig(config)
+                    .setAudioFormat(pcmFormat(AudioFormat.CHANNEL_IN_STEREO))
+                    .setBufferSizeInBytes(size)
+                    .build()
+                    .initializedOrNull()
+            }.getOrNull()
+        }
     }.onFailure { Log.w(TAG, "device audio unavailable", it) }.getOrNull()
 
     /**
@@ -262,14 +327,16 @@ class ScreenRecorder(
         openMic(AudioFormat.CHANNEL_IN_STEREO) ?: openMic(AudioFormat.CHANNEL_IN_MONO)
 
     @SuppressLint("MissingPermission")
-    private fun openMic(mask: Int): AudioRecord? = runCatching {
-        AudioRecord.Builder()
-            .setAudioSource(MediaRecorder.AudioSource.MIC)
-            .setAudioFormat(pcmFormat(mask))
-            .setBufferSizeInBytes(minBuffer(mask) * 4)
-            .build()
-            .initializedOrNull()
-    }.onFailure { Log.w(TAG, "microphone unavailable with channel mask $mask", it) }.getOrNull()
+    private fun openMic(mask: Int): AudioRecord? = bufferSizes(mask).firstNotNullOfOrNull { size ->
+        runCatching {
+            AudioRecord.Builder()
+                .setAudioSource(MediaRecorder.AudioSource.MIC)
+                .setAudioFormat(pcmFormat(mask))
+                .setBufferSizeInBytes(size)
+                .build()
+                .initializedOrNull()
+        }.onFailure { Log.w(TAG, "microphone unavailable with channel mask $mask, buffer $size", it) }.getOrNull()
+    }
 
     private fun AudioRecord.initializedOrNull(): AudioRecord? =
         if (state == AudioRecord.STATE_INITIALIZED) this else { release(); null }
@@ -282,6 +349,17 @@ class ScreenRecorder(
 
     private fun minBuffer(mask: Int) =
         AudioRecord.getMinBufferSize(SAMPLE_RATE, mask, AudioFormat.ENCODING_PCM_16BIT).coerceAtLeast(BLOCK_FRAMES * 4)
+
+    /**
+     * Half a second of capture buffer first, so the pump being held up for a
+     * moment (a GC, a busy CPU) loses nothing; the old 4x minimum (about
+     * 80 ms) if a device will not take that.
+     */
+    private fun bufferSizes(mask: Int): List<Int> {
+        val frameBytes = if (mask == AudioFormat.CHANNEL_IN_STEREO) 4 else 2
+        val small = minBuffer(mask) * 4
+        return listOf(maxOf(small, SAMPLE_RATE * frameBytes * BUFFER_MS / 1000), small).distinct()
+    }
 
     /**
      * Reads one block of interleaved stereo into [out]; returns frames read,
@@ -339,16 +417,15 @@ class ScreenRecorder(
         }
     }
 
-    /** PCM blocks into the AAC encoder, stamped on the monotonic clock. */
+    /** PCM blocks into the AAC encoder, stamped on the monotonic clock ([AudioTimeline]). */
     private fun audioPumpLoop(codec: MediaCodec) {
         val deviceBlock = ShortArray(BLOCK_FRAMES * 2)
         val reader = blockReader(deviceBlock)
         val block = ShortArray(BLOCK_FRAMES * 2)
-        var anchorUs = -1L
-        var framesSinceAnchor = 0L
+        val timeline = AudioTimeline(SAMPLE_RATE, windowBlocks = timelineWindowBlocks)
         try {
             while (running.get()) {
-                val frames = reader.read(block)
+                var frames = reader.read(block)
                 if (frames < 0) {
                     Log.w(TAG, "audio source ended ($frames)")
                     break
@@ -357,46 +434,31 @@ class ScreenRecorder(
                 if (clock.isPaused) {
                     // Keep draining the capture so it does not overflow, but
                     // nothing recorded while paused reaches the file. The next
-                    // block re-anchors.
-                    anchorUs = -1L
+                    // block re-anchors, never before the resume that ended the pause.
+                    timeline.reset()
                     continue
                 }
-                if (anchorUs < 0) {
-                    val blockUs = frames * 1_000_000L / SAMPLE_RATE
-                    // The block just read began about blockUs ago — but never
-                    // before the resume that ended the last pause.
-                    anchorUs = maxOf(nowUs() - blockUs, clock.lastResumeUs())
-                    framesSinceAnchor = 0
+                val step = timeline.onBlock(nowUs(), frames, clock.lastResumeUs())
+                if (step > 0) {
+                    // Samples were lost (the capture buffer overflowed): silence
+                    // in their place keeps everything after in step with the picture.
+                    Log.w(TAG, "audio behind the clock; ${step * 1000L / SAMPLE_RATE} ms of silence")
+                    queuePcm(codec, null, step * 2, timeline)
+                } else if (step < 0) {
+                    val drop = minOf(-step, frames)
+                    frames -= drop
+                    if (frames == 0) continue
+                    System.arraycopy(block, drop * 2, block, 0, frames * 2)
+                    System.arraycopy(deviceBlock, drop * 2, deviceBlock, 0, frames * 2)
                 }
-                val alignedUs = clock.adjust(anchorUs + framesSinceAnchor * 1_000_000L / SAMPLE_RATE)
+                val alignedUs = clock.adjust(timeline.nextUs())
                 if (effectiveAudio.usesMic) session?.append(AudioRole.DIALOGUE, alignedUs, block, frames)
                 if (effectiveAudio.usesDevice) {
                     val pcm = if (effectiveAudio.usesMic) deviceBlock else block
                     session?.append(AudioRole.DEVICE, alignedUs, pcm, frames)
                 }
                 if (effectiveAudio == AudioSource.DEVICE_AND_MIC) Pcm.mixInto(block, deviceBlock, frames * 2)
-                var offset = 0
-                val samples = frames * 2
-                while (offset < samples && running.get()) {
-                    val idx = codec.dequeueInputBuffer(10_000)
-                    if (idx < 0) continue
-                    val buf = codec.getInputBuffer(idx) ?: continue
-                    buf.clear()
-                    buf.order(ByteOrder.nativeOrder())
-                    // Whole stereo frames only.
-                    val fit = minOf(samples - offset, buf.remaining() / 2) and 1.inv()
-                    val pts = anchorUs + framesSinceAnchor * 1_000_000L / SAMPLE_RATE
-                    if (fit <= 0) {
-                        // An input buffer smaller than one frame; hand it back
-                        // rather than spin on it.
-                        codec.queueInputBuffer(idx, 0, 0, pts, 0)
-                        break
-                    }
-                    buf.asShortBuffer().put(block, offset, fit)
-                    codec.queueInputBuffer(idx, 0, fit * 2, pts, 0)
-                    framesSinceAnchor += fit / 2
-                    offset += fit
-                }
+                queuePcm(codec, block, frames * 2, timeline)
             }
         } catch (e: IllegalStateException) {
             // Codec torn down underneath us during stop.
@@ -416,39 +478,80 @@ class ScreenRecorder(
         }
     }
 
-    /** Shared encoder→muxer drain; exits on EOS or codec teardown. */
-    private fun drainLoop(codec: MediaCodec, isVideo: Boolean, gate: MuxerGate) {
-        val info = MediaCodec.BufferInfo()
-        while (true) {
-            val idx = try {
-                codec.dequeueOutputBuffer(info, 10_000)
-            } catch (e: IllegalStateException) {
-                return
+    private val zeros = ByteArray(8192)
+
+    /** Queues [samples] interleaved stereo samples of [pcm], or of silence when null, at the timeline's clock. */
+    private fun queuePcm(codec: MediaCodec, pcm: ShortArray?, samples: Int, timeline: AudioTimeline) {
+        var offset = 0
+        while (offset < samples && running.get()) {
+            val idx = codec.dequeueInputBuffer(10_000)
+            if (idx < 0) continue
+            val buf = codec.getInputBuffer(idx) ?: continue
+            buf.clear()
+            buf.order(ByteOrder.nativeOrder())
+            // Whole stereo frames only.
+            val fit = minOf(samples - offset, buf.remaining() / 2) and 1.inv()
+            val pts = timeline.nextUs()
+            if (fit <= 0) {
+                // An input buffer smaller than one frame; hand it back
+                // rather than spin on it.
+                codec.queueInputBuffer(idx, 0, 0, pts, 0)
+                break
             }
-            when {
-                idx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> gate.addTrack(isVideo, codec.outputFormat)
-                idx >= 0 -> {
-                    val buf = codec.getOutputBuffer(idx)
-                    if (buf != null && info.size > 0 &&
-                        (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0
-                    ) {
-                        try {
-                            gate.write(isVideo, buf, info)
-                        } catch (e: Exception) {
-                            fail(e)
-                        }
-                    }
-                    runCatching { codec.releaseOutputBuffer(idx, false) }
-                    if ((info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) return
+            if (pcm != null) {
+                buf.asShortBuffer().put(pcm, offset, fit)
+            } else {
+                var left = fit * 2
+                while (left > 0) {
+                    val n = minOf(left, zeros.size)
+                    buf.put(zeros, 0, n)
+                    left -= n
                 }
             }
+            codec.queueInputBuffer(idx, 0, fit * 2, pts, 0)
+            timeline.advance(fit / 2)
+            offset += fit
+        }
+    }
+
+    /**
+     * Shared encoder→muxer drain; exits on EOS or codec teardown. Anything
+     * thrown while recording (a codec error, a muxer that refuses a track)
+     * stops the capture; after stop() it is the teardown and is ignored.
+     */
+    private fun drainLoop(codec: MediaCodec, isVideo: Boolean, gate: MuxerGate) {
+        val info = MediaCodec.BufferInfo()
+        try {
+            while (true) {
+                val idx = codec.dequeueOutputBuffer(info, 10_000)
+                when {
+                    idx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> gate.addTrack(isVideo, codec.outputFormat)
+                    idx >= 0 -> {
+                        val buf = codec.getOutputBuffer(idx)
+                        if (buf != null && info.size > 0 &&
+                            (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0
+                        ) {
+                            try {
+                                gate.write(isVideo, buf, info)
+                            } catch (e: Exception) {
+                                fail(e)
+                            }
+                        }
+                        codec.releaseOutputBuffer(idx, false)
+                        if ((info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) return
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            if (running.get()) fail(e)
         }
     }
 
     private fun fail(e: Throwable) {
         if (failed.compareAndSet(false, true)) {
             Log.e(TAG, "capture failed", e)
-            onFatalError?.invoke(e)
+            val report = onFatalError
+            if (running.get()) report?.invoke(e)
         }
     }
 
@@ -465,6 +568,8 @@ class ScreenRecorder(
 
         private val lock = Any()
         private var started = false
+        /** Set by [finish]: the muxer is stopped (or about to be released); later samples are dropped. */
+        private var closed = false
         private var videoTrack = -1
         private var audioTrack = -1
         private var videoFormatAtMs = 0L
@@ -479,7 +584,7 @@ class ScreenRecorder(
 
         fun addTrack(isVideo: Boolean, format: MediaFormat) = synchronized(lock) {
             // A track whose format turns up after the muxer started is left out.
-            if (started) return@synchronized
+            if (started || closed) return@synchronized
             if (isVideo) {
                 videoTrack = muxer.addTrack(format)
                 videoFormatAtMs = SystemClock.elapsedRealtime()
@@ -490,6 +595,7 @@ class ScreenRecorder(
         }
 
         fun write(isVideo: Boolean, buf: ByteBuffer, src: MediaCodec.BufferInfo) = synchronized(lock) {
+            if (closed) return@synchronized
             if (!started && expectAudio && audioTrack < 0 && videoTrack >= 0 &&
                 SystemClock.elapsedRealtime() - videoFormatAtMs > AUDIO_FORMAT_WAIT_MS
             ) {
@@ -513,10 +619,12 @@ class ScreenRecorder(
 
         /** Flushes and stops the muxer. Returns whether a playable file with video came out. */
         fun finish(): Boolean = synchronized(lock) {
+            if (closed) return@synchronized false
             if (!started && videoTrack >= 0) {
                 expectAudio = false
-                maybeStart()
+                runCatching { maybeStart() }.onFailure { Log.w(TAG, "muxer start", it) }
             }
+            closed = true
             if (!started) return@synchronized false
             val stopped = runCatching { muxer.stop() }.onFailure { Log.w(TAG, "muxer stop", it) }.isSuccess
             stopped && videoSamples > 0
@@ -557,6 +665,12 @@ class ScreenRecorder(
         private const val BLOCK_FRAMES = 1024
         private const val AUDIO_FORMAT_WAIT_MS = 3_000L
         private const val MAX_PENDING_BYTES = 32 * 1024 * 1024
+        /** How long stop() waits for each worker thread. */
+        private const val JOIN_MS = 3_000L
+        /** AudioRecord buffer asked for, in milliseconds. */
+        private const val BUFFER_MS = 500
+        /** Encoder sizes/rates tried before a start is given up. */
+        private const val MAX_ENCODER_ATTEMPTS = 6
 
         private fun nowUs() = System.nanoTime() / 1000
     }
