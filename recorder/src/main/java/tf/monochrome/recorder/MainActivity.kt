@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
@@ -32,6 +33,7 @@ import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -71,7 +73,12 @@ class MainActivity : ComponentActivity() {
     private val pendingEdit = MutableStateFlow<Uri?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        enableEdgeToEdge()
+        // Always light icons: the app is dark whatever the system theme, and the
+        // default follows the system — dark icons on a dark app in light mode.
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+        )
         super.onCreate(savedInstanceState)
         if (savedInstanceState == null) handle(intent)
         setContent { RecorderTheme { AppRoot(pendingEdit) } }
@@ -145,7 +152,12 @@ private fun AppRoot(pendingEdit: MutableStateFlow<Uri?>) {
         })
     } else {
         val backdrop = rememberGlassBackdrop()
-        CompositionLocalProvider(LocalGlassBackdrop provides backdrop) {
+        // LocalContentColor: the Scaffold this replaced gave the pages their text
+        // colour; without it plain Text and Icons default to black on black.
+        CompositionLocalProvider(
+            LocalGlassBackdrop provides backdrop,
+            LocalContentColor provides MaterialTheme.colorScheme.onBackground,
+        ) {
             Box(
                 Modifier
                     .fillMaxSize()

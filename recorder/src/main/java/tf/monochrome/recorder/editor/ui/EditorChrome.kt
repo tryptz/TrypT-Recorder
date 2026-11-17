@@ -519,7 +519,10 @@ internal fun StepSlider(
 /** A glass pill holding a row of choices, the chosen one lit in the accent. */
 @Composable
 internal fun Segmented(options: List<String>, selected: Int, onSelect: (Int) -> Unit, modifier: Modifier = Modifier) {
-    GlassPill(modifier = modifier.height(44.dp)) {
+    // No backdrop: this control always sits inside something — the export
+    // sheet, a page — and a lens there would show the raw video behind the
+    // sheet, or the page it is itself part of. The slab alone, like a card.
+    GlassPill(modifier = modifier.height(44.dp), hazeState = null) {
         Row(Modifier.fillMaxSize().padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
             options.forEachIndexed { i, label ->
                 val on = i == selected

@@ -61,6 +61,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SnackbarHost
@@ -84,6 +85,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -202,6 +206,15 @@ fun EditorScreen(projectId: String, onClose: () -> Unit) {
     // An export can take minutes; keep the screen (and so the app) alive for it.
     val view = LocalView.current
     val exporting = exportState is ExportState.Running
+    // Leaving the app (Home, lock) pauses the preview.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) vm.onBackground()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     DisposableEffect(exporting) {
         view.keepScreenOn = exporting
         onDispose { view.keepScreenOn = false }
@@ -263,7 +276,12 @@ fun EditorScreen(projectId: String, onClose: () -> Unit) {
         is Selection.Text -> DockTab.TEXT
         Selection.None -> dockTab
     }
-    CompositionLocalProvider(LocalGlassBackdrop provides backdrop) {
+    // The page's own text and icon colour: the Scaffold this replaced set it, and
+    // without it everything not on a Surface defaults to black — on black.
+    CompositionLocalProvider(
+        LocalGlassBackdrop provides backdrop,
+        LocalContentColor provides MaterialTheme.colorScheme.onBackground,
+    ) {
     Box(
         Modifier
             .fillMaxSize()

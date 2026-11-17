@@ -41,6 +41,7 @@ import tf.monochrome.recorder.editor.export.MusicLinkAnalysis
 import tf.monochrome.recorder.editor.model.VisualLink
 import tf.monochrome.recorder.editor.export.RecorderAudioMixerFactory
 import tf.monochrome.recorder.editor.export.ExportManager
+import tf.monochrome.recorder.editor.export.ExportState
 import tf.monochrome.recorder.editor.export.ExportPlan
 import tf.monochrome.recorder.editor.export.ExportPlanner
 import tf.monochrome.recorder.editor.export.ExportResolution
@@ -132,9 +133,20 @@ class EditorViewModel(app: Application, private val projectId: String) : Android
     private var textureView: WeakReference<TextureView>? = null
     private var videoSurface: Surface? = null
     private var videoSize = Size(0, 0)
+
+    /**
+     * The size the preview renders at: the plan's canvas (720p). The texture's
+     * buffer is held at exactly this, and Media3 told exactly this, whatever
+     * size the view is; the view scales the buffer to fit, and its shape is
+     * the canvas's, so it scales evenly. Following the view's own size instead
+     * let the two drift apart while the layout settled — the picture was drawn
+     * at an old size into a corner of a resized buffer, small and cut off.
+     */
+    private var renderSize = Size(0, 0)
     private var playerUsesOverlayGraph = false
     /** The player reported an error; it is replaced on the next rebuild rather than reused. */
     private var playerFailed = false
+    private var errorRebuilds = 0
     private var player: CompositionPlayer? = null
     private var lastPlan: ExportPlan? = null
     private var rebuildJob: Job? = null
@@ -201,6 +213,7 @@ class EditorViewModel(app: Application, private val projectId: String) : Android
 
     private fun afterChange(continuous: Boolean = false) {
         val p = project ?: return
+        errorRebuilds = 0
         // Drop a selection whose target no longer exists (deleted, undone).
         when (val s = selection.value) {
             is Selection.Clip -> if (p.clips.none { it.id == s.id }) selection.value = Selection.None
@@ -438,8 +451,8 @@ class EditorViewModel(app: Application, private val projectId: String) : Android
             }
 
             override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) {
-                videoSize = Size(width, height)
-                videoSurface?.let { surface -> player?.let { runCatching { it.setVideoSurface(surface, videoSize) } } }
+                // TextureView has just reset the buffer to its own new size; put ours back.
+                applyRenderSize(texture, width, height)
             }
 
             override fun onSurfaceTextureDestroyed(texture: SurfaceTexture): Boolean {
@@ -449,23 +462,43 @@ class EditorViewModel(app: Application, private val projectId: String) : Android
 
             override fun onSurfaceTextureUpdated(texture: SurfaceTexture) = Unit
         }
+        // Usually not there yet: the view brings its surface once it is laid
+        // out, and useTexture builds the preview then — once, with somewhere to
+        // draw, rather than once without a surface and again when it arrives.
         view.surfaceTexture?.let { useTexture(it, view.width, view.height) }
-        lastPlan = null
-        schedulePreview(immediate = true)
     }
 
     private fun useTexture(texture: SurfaceTexture, width: Int, height: Int) {
         videoSurface?.release()
-        val surface = Surface(texture)
-        videoSurface = surface
-        videoSize = Size(width, height)
-        player?.let { runCatching { it.setVideoSurface(surface, videoSize) } }
-        lastPlan = null
-        schedulePreview(immediate = true)
+        videoSurface = Surface(texture)
+        // A player that already exists only needs the new surface (applyRenderSize
+        // hands it over); rebuilding it would prepare everything a second time.
+        applyRenderSize(texture, width, height)
+        if (player == null) {
+            lastPlan = null
+            schedulePreview(immediate = true)
+        }
+    }
+
+    /**
+     * Holds the texture's buffer at [renderSize] (the view's size until a plan
+     * gives one) and tells the player the same size, so the two cannot differ.
+     */
+    private fun applyRenderSize(texture: SurfaceTexture, viewWidth: Int, viewHeight: Int) {
+        val size = if (renderSize.width > 0 && renderSize.height > 0) renderSize else Size(viewWidth, viewHeight)
+        if (size.width <= 0 || size.height <= 0) return
+        texture.setDefaultBufferSize(size.width, size.height)
+        videoSize = size
+        videoSurface?.let { surface -> player?.let { runCatching { it.setVideoSurface(surface, size) } } }
     }
 
     private fun dropTexture() {
-        player?.let { runCatching { it.clearVideoSurface() } }
+        // The Surface itself, not the no-argument clear: CompositionPlayer only
+        // clears the output it was given, and the bare call quietly does nothing,
+        // leaving the player drawing into a texture that is about to be freed.
+        // This form waits until the player has let go of it.
+        val surface = videoSurface
+        if (surface != null) player?.let { runCatching { it.clearVideoSurface(surface) } }
         videoSurface?.release()
         videoSurface = null
     }
@@ -507,9 +540,18 @@ class EditorViewModel(app: Application, private val projectId: String) : Android
             override fun onPlayerError(error: PlaybackException) {
                 Log.w(TAG, "preview error", error)
                 _previewError.value = error.errorCodeName
-                // The next rebuild makes a new player rather than reusing this one.
                 lastPlan = null
                 playerFailed = true
+                // A failed player holds its decoders and plays nothing: replace it,
+                // a couple of times at most, so a project that always fails does
+                // not rebuild forever. Any edit resets the count.
+                if (errorRebuilds < MAX_ERROR_REBUILDS) {
+                    errorRebuilds++
+                    viewModelScope.launch {
+                        releasePlayer()
+                        schedulePreview(immediate = true)
+                    }
+                }
             }
         })
         player = p
@@ -599,8 +641,19 @@ class EditorViewModel(app: Application, private val projectId: String) : Android
             if (!_grainSolo.value) pl else pl.copy(visuals = pl.visuals?.let { v -> v.copy(grain = v.grain?.copy(solo = true)) })
         }
         plan?.visuals?.let { _aspect.value = it.width.toFloat() / it.height }
+        plan?.visuals?.let { v ->
+            val size = Size(v.width, v.height)
+            if (size != renderSize) {
+                renderSize = size
+                textureView?.get()?.let { view -> view.surfaceTexture?.let { applyRenderSize(it, view.width, view.height) } }
+            }
+        }
         // Nothing to draw into yet: the view brings its surface, then rebuilds.
         textureView?.get() ?: return
+        videoSurface ?: return
+        // An export has the codecs; a second player would compete for them.
+        // restorePreview() brings the preview back when it ends.
+        if (ExportManager.state.value is ExportState.Running) return
         if (plan == lastPlan && p.musicLinks == lastPreviewLinks) return
         val previousPlan = lastPlan
         plan?.mixer?.let { previewMixer.settings = it }
@@ -685,6 +738,7 @@ class EditorViewModel(app: Application, private val projectId: String) : Android
     fun refreshExportQueue() = ExportManager.refreshQueue(getApplication())
 
     fun resumeExport() {
+        stopPreviewWork()
         releasePlayer()
         ExportManager.resume(getApplication())
     }
@@ -700,6 +754,7 @@ class EditorViewModel(app: Application, private val projectId: String) : Android
             settings.copy(aspectOverride = AspectPreset.WIDE),
             settings.copy(aspectOverride = AspectPreset.TALL),
         ) else listOf(settings)
+        stopPreviewWork()
         releasePlayer()
         ExportManager.enqueue(getApplication(), draft, variants)
         return null
@@ -707,6 +762,18 @@ class EditorViewModel(app: Application, private val projectId: String) : Android
 
     /** After an export the preview needs preparing again. */
     fun restorePreview() = schedulePreview(immediate = true)
+
+    /** A pending rebuild or analysis must not start a player while an export runs. */
+    private fun stopPreviewWork() {
+        rebuildJob?.cancel()
+        analysisJob?.cancel()
+        analysisKey = null
+    }
+
+    /** The app went to the background: a preview has no business playing there. */
+    fun onBackground() {
+        player?.let { runCatching { it.pause() } }
+    }
 
     override fun onCleared() {
         rebuildJob?.cancel()
@@ -716,6 +783,7 @@ class EditorViewModel(app: Application, private val projectId: String) : Android
 
     companion object {
         private const val TAG = "EditorViewModel"
+        private const val MAX_ERROR_REBUILDS = 2
 
         /** Same plan as an export, on a lighter canvas. */
         private val PREVIEW_SETTINGS = ExportSettings(resolution = ExportResolution.P720)
