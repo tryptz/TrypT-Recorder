@@ -1,7 +1,10 @@
 cmake_minimum_required(VERSION 3.22.1)
 project(recorder_dsp LANGUAGES CXX)
 
+# Only the snap-ins (tac_dsp): the mixer below is the recorder's own, so the
+# core's DspEngine and its USB driver stay out of the build.
 set(TAC_BUILD_USB OFF CACHE BOOL "" FORCE)
+set(TAC_BUILD_ENGINE OFF CACHE BOOL "" FORCE)
 add_subdirectory(tryptify-audio-core)
 # The core builds with -ffast-math, which assumes no NaN or infinity and so
 # deletes isfinite() checks - including the ones that keep a broken effect

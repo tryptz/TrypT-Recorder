@@ -383,7 +383,12 @@ audio begins after a gap, when a video clip is muted and when a video overlay
 generates silence during preview.
 
 The native build links `tac_dsp` from `tryptify-audio-core` revision
-`09b3956d699b41125fd213562459477f9d8b6ce9` with the USB driver disabled.
+`09b3956d699b41125fd213562459477f9d8b6ce9`: the snap-ins and their factory
+(`snapin_factory.cpp`, split out of `dsp_engine.cpp` here) and nothing else.
+The core's `DspEngine` (`TAC_BUILD_ENGINE`) and USB driver (`TAC_BUILD_USB`,
+whose sources this copy does not carry) are off, so the core also configures
+and tests on its own (`cmake -S recorder/src/main/cpp/tryptify-audio-core`).
+`dsp/oxford/oxford_dsp.h` and `dsp/wsola*.h` are vendored but not compiled.
 The upstream license is in
 `recorder/src/main/cpp/tryptify-audio-core/LICENSE`. The JNI adapter calls the
 upstream snap-in factory directly because the original player's engine feeds one

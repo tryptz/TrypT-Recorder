@@ -3,8 +3,9 @@
 # tryptify-audio-core: the native audio pieces shared by Tryptify and the
 # StepMania port. Two static libraries, no JNI:
 #
-#   tac_usb  libusb UAC1/UAC2 isochronous output driver (+ vendored libusb)
-#   tac_dsp  mix-bus DSP engine and its snap-in processors
+#   tac_usb     libusb UAC1/UAC2 isochronous output driver (+ vendored libusb)
+#   tac_dsp     the snap-in processors and their factory, createSnapin()
+#   tac_engine  the mix-bus DspEngine built on them
 #
 # Consumers add_subdirectory() this and link the targets into their own shared
 # library. JNI lives with the consumer, because a JNI symbol name encodes the
@@ -13,10 +14,15 @@
 cmake_minimum_required(VERSION 3.22.1)
 project(tryptify_audio_core LANGUAGES C CXX)
 
-# Tests default on only when this is the root project, so a consumer's build
-# never compiles them by accident.
-option(TAC_BUILD_TESTS "Build host tests" ${PROJECT_IS_TOP_LEVEL})
-option(TAC_BUILD_USB   "Build the libusb output driver" ON)
+# Tests and the engine default on only when this is the root project, so a
+# consumer's build never compiles them by accident. Tryptify Recorder runs its
+# own mixer on tac_dsp and does not use DspEngine.
+option(TAC_BUILD_TESTS  "Build host tests" ${PROJECT_IS_TOP_LEVEL})
+option(TAC_BUILD_ENGINE "Build DspEngine (tac_engine)" ${PROJECT_IS_TOP_LEVEL})
+# Off by default: this copy (the one vendored in Tryptify Recorder) does not
+# carry the driver's sources or the libusb submodule, and the core must still
+# configure on its own.
+option(TAC_BUILD_USB    "Build the libusb output driver" OFF)
 
 set(TAC_ARM64_SIMD $<$<STREQUAL:${ANDROID_ABI},arm64-v8a>:-march=armv8-a+simd>)
 
@@ -27,6 +33,10 @@ set(TAC_ARM64_SIMD $<$<STREQUAL:${ANDROID_ABI},arm64-v8a>:-march=armv8-a+simd>)
 # glibc hosts, which is what lets the host test build link the driver.
 if(TAC_BUILD_USB)
     set(TAC_LIBUSB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/libusb)
+    if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/usb/libusb_uac_driver.cpp)
+        message(FATAL_ERROR
+            "TAC_BUILD_USB: usb/ is not in this copy of tryptify-audio-core")
+    endif()
     if(NOT EXISTS ${TAC_LIBUSB_DIR}/libusb/core.c)
         message(FATAL_ERROR
             "libusb submodule missing: git submodule update --init --recursive")
@@ -68,8 +78,8 @@ if(TAC_BUILD_USB)
     endif()
 endif()
 
-# ── DSP engine ───────────────────────────────────────────────────────────
-add_library(tac_dsp STATIC dsp/dsp_engine.cpp)
+# ── Snap-ins ─────────────────────────────────────────────────────────────
+add_library(tac_dsp STATIC dsp/snapin_factory.cpp)
 target_include_directories(tac_dsp PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/dsp
     ${CMAKE_CURRENT_SOURCE_DIR}/dsp/util
@@ -87,6 +97,15 @@ if(ANDROID)
     target_link_libraries(tac_dsp PUBLIC log)
 endif()
 
+# ── DSP engine ───────────────────────────────────────────────────────────
+if(TAC_BUILD_ENGINE)
+    add_library(tac_engine STATIC dsp/dsp_engine.cpp)
+    target_compile_options(tac_engine PRIVATE
+        -O3 -ffast-math -fno-exceptions -fno-rtti ${TAC_ARM64_SIMD})
+    set_target_properties(tac_engine PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    target_link_libraries(tac_engine PUBLIC tac_dsp)
+endif()
+
 # ── Host tests ───────────────────────────────────────────────────────────
 if(TAC_BUILD_TESTS AND NOT ANDROID)
     enable_testing()
@@ -95,9 +114,11 @@ if(TAC_BUILD_TESTS AND NOT ANDROID)
     target_compile_options(wsola_pitch_test PRIVATE -O2)
     add_test(NAME wsola_pitch COMMAND wsola_pitch_test)
 
-    add_executable(dsp_engine_test tests/dsp_engine_test.cpp)
-    target_link_libraries(dsp_engine_test PRIVATE tac_dsp)
-    add_test(NAME dsp_engine COMMAND dsp_engine_test)
+    if(TAC_BUILD_ENGINE)
+        add_executable(dsp_engine_test tests/dsp_engine_test.cpp)
+        target_link_libraries(dsp_engine_test PRIVATE tac_engine)
+        add_test(NAME dsp_engine COMMAND dsp_engine_test)
+    endif()
 
     if(TAC_BUILD_USB)
         add_executable(usb_link_test tests/usb_link_test.cpp)

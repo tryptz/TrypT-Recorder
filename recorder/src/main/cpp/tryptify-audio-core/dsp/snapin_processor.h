@@ -103,5 +103,5 @@ private:
     ChannelOversampler osL_, osR_;
 };
 
-// Factory — implemented in dsp_engine.cpp
+// Factory — implemented in snapin_factory.cpp
 SnapinProcessor* createSnapin(SnapinType type);

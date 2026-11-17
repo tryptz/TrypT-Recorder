@@ -3,10 +3,11 @@
 Native audio code shared by [Tryptify](https://github.com/tryptz/monotrypt.android)
 and the StepMania Android port.
 
-| Target    | What it is |
-|-----------|------------|
-| `tac_usb` | libusb UAC1/UAC2 isochronous output driver. Takes a `UsbDeviceConnection` fd, owns the streaming interface, paces from the async feedback endpoint. |
-| `tac_dsp` | Mix-bus DSP engine: four buses plus master, snap-in processor chains, oversampling. |
+| Target       | What it is |
+|--------------|------------|
+| `tac_usb`    | libusb UAC1/UAC2 isochronous output driver. Takes a `UsbDeviceConnection` fd, owns the streaming interface, paces from the async feedback endpoint. `TAC_BUILD_USB`, off by default. |
+| `tac_dsp`    | The snap-in processors, with oversampling and latency reporting, and their factory `createSnapin()`. |
+| `tac_engine` | Mix-bus DSP engine on `tac_dsp`: four buses plus master, snap-in chains. `TAC_BUILD_ENGINE`, on only when this is the top-level project. |
 
 No JNI. JNI symbol names encode the calling class, so each app keeps its own
 bridge and links these static libraries into its own `.so`.
@@ -14,12 +15,15 @@ bridge and links these static libraries into its own `.so`.
 ## Use
 
 ```cmake
+set(TAC_BUILD_USB ON)      # needs usb/ and the libusb submodule
+set(TAC_BUILD_ENGINE ON)
 add_subdirectory(third_party/tryptify-audio-core)
-target_link_libraries(my_native_lib tac_usb tac_dsp)
+target_link_libraries(my_native_lib tac_usb tac_engine)
 ```
 
 Clone with `--recursive`, or run `git submodule update --init --recursive`
-(libusb is a submodule).
+(libusb is a submodule). The copy vendored in Tryptify Recorder carries
+neither `usb/` nor libusb and builds only `tac_dsp`.
 
 ## Test on the host
 
