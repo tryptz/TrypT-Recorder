@@ -105,7 +105,7 @@ class RecorderService : Service() {
                 // happens next, or the system kills the app for it — and never
                 // with a type that drops mediaProjection from a capture in
                 // progress (the button can be switched on mid-recording).
-                if (!inForeground) enterForeground(if (isCapturing()) projectionType() else idleType())
+                if (!inForeground) { if (isCapturing()) enterCaptureForeground() else enterForeground(idleType()) }
                 refreshForeground()
             }
             ACTION_HIDE_BUTTON -> {
@@ -159,7 +159,7 @@ class RecorderService : Service() {
             return
         }
         // mediaProjection type first: getMediaProjection() refuses without it.
-        if (!enterForeground(projectionType())) {
+        if (!enterCaptureForeground()) {
             // Still honour startForegroundService's contract before stopping.
             enterForeground(idleType())
             fail(getString(R.string.error_capture_not_allowed))
@@ -361,13 +361,31 @@ class RecorderService : Service() {
 
     // ── Foreground and notifications ───────────────────────────────────
 
-    private fun projectionType(): Int {
+    private fun projectionType(withMic: Boolean = wantsMic()): Int {
         var t = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
         if (button != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             t = t or ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
         }
+        // Android 11+ gives a foreground service silence from the mic once the
+        // user leaves the app, unless the service is of the microphone type.
+        if (withMic && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) t = t or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
         return t
     }
+
+    /** The recording will use the mic, and may (Android 14 refuses the type without the permission). */
+    private fun wantsMic(): Boolean =
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+            RecorderApp.instance.settings.current.audioSource.usesMic &&
+            checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+
+    /**
+     * Foreground with the capture types. Android 14 can refuse the microphone
+     * type when the app is not in use (a recording started from the floating
+     * button over another app); the recording then still starts, as it did
+     * before the type was asked for, rather than failing.
+     */
+    private fun enterCaptureForeground(): Boolean =
+        enterForeground(projectionType()) || (wantsMic() && enterForeground(projectionType(withMic = false)))
 
     /** Below 14 there is no special-use type, and a typeless foreground service is fine. */
     private fun idleType(): Int =
@@ -387,7 +405,7 @@ class RecorderService : Service() {
     /** Re-evaluates whether the service still has a reason to run, and with which type. */
     private fun refreshForeground() {
         when {
-            isCapturing() -> enterForeground(projectionType())
+            isCapturing() -> enterCaptureForeground()
             button != null -> enterForeground(idleType())
             else -> {
                 inForeground = false

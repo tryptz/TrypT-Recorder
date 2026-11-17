@@ -3,11 +3,19 @@ project(recorder_dsp LANGUAGES CXX)
 
 set(TAC_BUILD_USB OFF CACHE BOOL "" FORCE)
 add_subdirectory(tryptify-audio-core)
+# The core builds with -ffast-math, which assumes no NaN or infinity and so
+# deletes isfinite() checks - including the ones that keep a broken effect
+# from feeding NaN onward. Keep fast maths, but not that assumption.
+target_compile_options(tac_dsp PRIVATE -fno-finite-math-only)
 
 if(ANDROID)
     add_library(recorder_dsp SHARED mixer_jni.cpp)
     target_compile_options(recorder_dsp PRIVATE -Wall -Wextra -fvisibility=hidden)
     target_link_libraries(recorder_dsp PRIVATE tac_dsp)
+    # Export only the JNI entry points: without this the static DSP library and
+    # libc++ leaked ~2,400 symbols into the .so (two thirds of its size), and
+    # kept code alive that nothing calls.
+    target_link_options(recorder_dsp PRIVATE "-Wl,--exclude-libs,ALL")
 else()
     enable_testing()
     add_executable(recorder_mixer_test tests/recorder_mixer_test.cpp)

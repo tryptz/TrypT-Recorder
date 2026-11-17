@@ -41,8 +41,10 @@ android {
         // recorder this grew out of was already @RequiresApi(Q).
         minSdk = 29
         targetSdk = 36
-        versionCode = 16
-        versionName = "2.0.0-preview.9"
+        // No 32-bit x86: only old emulators run it. x86_64 stays for ChromeOS.
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
+        versionCode = 17
+        versionName = "2.0.0-preview.10"
     }
 
     signingConfigs {
