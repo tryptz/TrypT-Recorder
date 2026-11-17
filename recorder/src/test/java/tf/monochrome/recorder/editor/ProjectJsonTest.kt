@@ -1,8 +1,12 @@
 package tf.monochrome.recorder.editor
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Test
+import tf.monochrome.recorder.editor.model.CubeLut
 import tf.monochrome.recorder.editor.model.Filter
+import tf.monochrome.recorder.editor.model.LutColors
+import tf.monochrome.recorder.editor.model.updateClipPicture
 import tf.monochrome.recorder.editor.model.GrainDetail
 import tf.monochrome.recorder.editor.model.GrainMotion
 import tf.monochrome.recorder.editor.model.Project
@@ -50,6 +54,31 @@ class ProjectJsonTest {
         val p = project(video("a", 10)).let { it.copy(look = it.look.copy(grain = 0.5f, grainDetail = detail)) }
         val back = ProjectStore.JSON.decodeFromString(Project.serializer(), ProjectStore.JSON.encodeToString(Project.serializer(), p))
         assertEquals(detail, back.look.grainDetail)
+    }
+
+    @Test
+    fun `a graded draft saved with the colours as a list of numbers still loads`() {
+        // As drafts with a LUT have always been saved: colours a plain JSON list.
+        val colors = (0 until 8).map { (it * 0x202020) and 0xFFFFFF }
+        val json = """{"name":"Swap","size":2,"colors":[${colors.joinToString(",")}]}"""
+        val lut = ProjectStore.JSON.decodeFromString(CubeLut.serializer(), json)
+        assertEquals("Swap", lut.name)
+        assertEquals(colors, lut.colors.toIntArray().toList())
+        // And it is still written that way.
+        assertEquals(json, ProjectStore.JSON.encodeToString(CubeLut.serializer(), lut))
+
+        val p = project(video("a", 4)).let { it.updateClipPicture(it.clips[0].id) { pic -> pic.copy(grade = pic.grade.copy(lut = lut, lutMix = 0.5f)) } }
+        val back = ProjectStore.JSON.decodeFromString(Project.serializer(), ProjectStore.JSON.encodeToString(Project.serializer(), p))
+        assertEquals(p, back)
+        assertEquals(lut, back.clips[0].picture.grade.lut)
+    }
+
+    @Test
+    fun `lut colours compare by content`() {
+        val a = LutColors(intArrayOf(1, 2, 3))
+        assertEquals(a, LutColors(intArrayOf(1, 2, 3)))
+        assertEquals(a.hashCode(), LutColors(intArrayOf(1, 2, 3)).hashCode())
+        assertNotEquals(a, LutColors(intArrayOf(1, 2, 4)))
     }
 
     @Test

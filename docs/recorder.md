@@ -510,7 +510,17 @@ code before the fix and failed). Run them with
 
 Choose **LUT Library** in a clip's grade panel to use a bundled look or open a
 local 3D .cube. The eight looks come from Striped Purple and FilmSim and are
-stored as 17-point cubes. **Add audio** opens the Music Library, where six CC0
+17-point cubes. Their .cube sources, with the upstream notices, are in
+`tools/luts`; the app ships them as compact `.lut` files (`assets/creative/luts`,
+15 KB each instead of 130 KB of text) written by `tools/lut_to_binary.py`:
+the colours already rounded to 8 bits exactly as `CubeLut.parse` rounds them,
+plus the title and the licence line. `CubeLutAssetsTest` checks every bundled
+look reads the same either way; after changing a source, run
+`python3 tools/lut_to_binary.py tools/luts recorder/src/main/assets/creative/luts`.
+A user's own .cube is parsed as before. Colours are kept packed
+(`LutColors`, an IntArray with a cached hash, saved as the same JSON list as
+before), and the blended cube for a look and mix is cached, so preview
+rebuilds and plan comparisons do not redo or deep-compare 4913 boxed numbers. **Add audio** opens the Music Library, where six CC0
 loops and downloaded tracks are available alongside the document picker.
 Settings accepts direct HTTPS audio-file links and keeps successfully imported
 audio in app storage for offline use and draft reopening. Provenance, source

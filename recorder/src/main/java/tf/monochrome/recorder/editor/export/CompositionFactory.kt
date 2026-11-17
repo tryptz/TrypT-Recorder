@@ -27,6 +27,7 @@ import androidx.media3.transformer.Composition
 import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.EditedMediaItemSequence
 import androidx.media3.transformer.Effects
+import tf.monochrome.recorder.editor.model.CubeLut
 import tf.monochrome.recorder.editor.model.Filter
 import tf.monochrome.recorder.editor.model.OverlayClip
 import tf.monochrome.recorder.editor.model.PictureTransform
@@ -296,7 +297,8 @@ object CompositionFactory {
                 out += ColorMatrix.whiteBalance(grade.temperature, grade.exposure, grade.tint)
             }
             out += adjustments(grade.brightness, grade.contrast, grade.saturation)
-            if (grade.lutMix > 0f) grade.lut?.let { out += SingleColorLut.createFromCube(it.toRgbCube(grade.lutMix)) }
+            // A SingleColorLut owns a GL texture and must be new for every item; the cube it is made from is not.
+            if (grade.lutMix > 0f) grade.lut?.let { out += SingleColorLut.createFromCube(lutCube(it, grade.lutMix)) }
         }
         when (v.filter) {
             Filter.NONE -> Unit
@@ -327,6 +329,19 @@ object CompositionFactory {
             out += finishingEffects(v, music)
         }
         return out
+    }
+
+    /**
+     * The blended cube for a look at a mix, kept for the next rebuild: every
+     * preview rebuild, and every clip of a graded project, asked for the same
+     * one again. Media3 only reads the cube.
+     */
+    private val lutCubes = object : LinkedHashMap<Pair<CubeLut, Float>, Array<Array<IntArray>>>(8, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Pair<CubeLut, Float>, Array<Array<IntArray>>>) = size > 8
+    }
+
+    private fun lutCube(lut: CubeLut, mix: Float): Array<Array<IntArray>> = synchronized(lutCubes) {
+        lutCubes.getOrPut(lut to mix) { lut.toRgbCube(mix) }
     }
 
     private fun adjustments(brightness: Float, contrast: Float, saturation: Float): List<Effect> = buildList {

@@ -30,9 +30,14 @@ internal object CreativeAssets {
         Lut("velvia", "Velvia Vivid", "FilmSim"),
     )
 
+    /**
+     * A bundled look, from its compact .lut (made from the .cube sources in
+     * `tools/luts` by `tools/lut_to_binary.py`; the same colours parsing the
+     * .cube gives). A user's own .cube is still parsed as text.
+     */
     suspend fun readLut(context: Context, lut: Lut): CubeLut = withContext(Dispatchers.IO) {
-        context.assets.open("creative/luts/${lut.file}.cube").bufferedReader().use {
-            CubeLut.parse(it.readText(), lut.title)
+        context.assets.open("creative/luts/${lut.file}.lut").use {
+            CubeLut.readBinary(it.readBytes(), lut.title)
         }
     }
 
