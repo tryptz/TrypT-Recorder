@@ -179,7 +179,9 @@ private fun LinkEditor(
     var paused by remember(initial) { mutableStateOf(initial.paused) }
     val low = minOf(shape.lowest, shape.highest)
     val high = maxOf(shape.lowest, shape.highest)
-    val formulaValid = shape.formula.isBlank() || LinkFormula.compile(shape.formula).program != null
+    // Compiling parses the whole formula; do it when the formula changes, not on
+    // every recomposition (each slider drag in this dialog is one).
+    val formulaValid = remember(shape.formula) { shape.formula.isBlank() || LinkFormula.compile(shape.formula).program != null }
     AlertDialog(
         onDismissRequest = close,
         title = { Text(stringResource(target.label)) },

@@ -3,10 +3,29 @@ package tf.monochrome.recorder.ui
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.style.TextOverflow
+
+/**
+ * A label measured beforehand — against fixed constraints, so the measurer's
+ * cache serves it on every redraw instead of laying it out again for the
+ * space left at its position — drawn at [topLeft] and clipped to the canvas.
+ * Skipped, like [drawLabel] with text, when [labelRoom] finds it no room.
+ */
+fun DrawScope.drawLabel(layout: TextLayoutResult, topLeft: Offset) {
+    val room = labelRoom(size, topLeft) ?: return
+    if (layout.size.width <= room.width && layout.size.height <= room.height) {
+        drawText(layout, topLeft = topLeft)
+    } else {
+        clipRect(topLeft.x, topLeft.y, topLeft.x + room.width, topLeft.y + room.height) {
+            drawText(layout, topLeft = topLeft)
+        }
+    }
+}
 
 /**
  * [drawText] for a label placed at [topLeft] on a canvas. Compose lays the text

@@ -49,8 +49,10 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -70,9 +72,11 @@ import tf.monochrome.recorder.ui.TextAmber
 import tf.monochrome.recorder.ui.drawLabel
 import kotlin.math.abs
 import kotlin.math.ceil
+import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlinx.coroutines.flow.collectLatest
 
 private val VideoLaneHeight = 56.dp
 private val TextLaneHeight = 26.dp
@@ -86,11 +90,14 @@ private val AudioLaneHeight = 34.dp
  * Telling the two apart needs no flags: when the scroll position is where the
  * playhead says it should be, playback (or a seek) put it there. When it is
  * not, the user moved it.
+ *
+ * [playheadUs] is read only by the scroll-following effect, never while
+ * composing, so playback scrolls the tracks without recomposing them.
  */
 @Composable
 fun Timeline(
     project: Project,
-    playheadUs: Long,
+    playheadUs: () -> Long,
     selection: Selection,
     pixelsPerSecond: Dp,
     onScrub: (Long) -> Unit,
@@ -118,23 +125,34 @@ fun Timeline(
     // Until the first sync the scroll sits at 0 whatever the playhead says;
     // reading that as a scrub would throw the playhead back to the start.
     var synced by remember { mutableStateOf(false) }
-    LaunchedEffect(playheadUs, pxPerUs) {
-        if (!scroll.isScrollInProgress) {
-            scroll.scrollTo((playheadUs * pxPerUs).roundToInt())
-            synced = true
+    LaunchedEffect(pxPerUs) {
+        // collectLatest: a newer position cancels a scroll still on its way,
+        // as the restart of an effect keyed on the playhead used to.
+        snapshotFlow { playhead() }.collectLatest { us ->
+            if (!scroll.isScrollInProgress) {
+                scroll.scrollTo((us * pxPerUs).roundToInt())
+                synced = true
+            }
         }
     }
     LaunchedEffect(Unit) {
         snapshotFlow { scroll.value }.collect { v ->
-            if (synced && abs(v - (playhead * scale).roundToInt()) > 2) scrub((v / scale).toLong())
+            if (synced && abs(v - (playhead() * scale).roundToInt()) > 2) scrub((v / scale).toLong())
         }
     }
 
     val lanes = remember(project.audio) { assignLanes(project.audio) }
+    val markers = remember(project.markers, totalUs) { project.markers.filter { it.timeUs in 0..totalUs } }
+    val overlayLanes = remember(project.overlays, totalUs) {
+        ExportPlanner.visibleOverlays(project.overlays, totalUs)
+            .groupBy { it.layer }.toSortedMap(reverseOrder()).values.toList()
+    }
     val noRipple = remember { MutableInteractionSource() }
 
     BoxWithConstraints(modifier.background(MaterialTheme.colorScheme.surfaceContainerLow)) {
         val half = maxWidth / 2
+        val halfPx = constraints.maxWidth / 2f
+        val viewportPx = constraints.maxWidth.toFloat()
         Row(
             Modifier
                 .fillMaxSize()
@@ -150,13 +168,14 @@ fun Timeline(
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 Box {
-                    Ruler(totalUs, pxPerSec)
-                    project.markers.filter { it.timeUs in 0..totalUs }.forEach { marker ->
+                    // The ruler's left edge sits half a screen into the scroll,
+                    // so what is on screen starts at scroll − half.
+                    Ruler(totalUs, pxPerSec, visibleFromPx = { scroll.value - halfPx }, viewportPx = viewportPx)
+                    markers.forEach { marker ->
                         Box(Modifier.offset(x = usToDp(marker.timeUs)).width(3.dp).height(15.dp).background(TextAmber))
                     }
                 }
-                ExportPlanner.visibleOverlays(project.overlays, totalUs)
-                    .groupBy { it.layer }.toSortedMap(reverseOrder()).values.forEach { lane ->
+                overlayLanes.forEach { lane ->
                     Box(Modifier.fillMaxWidth().height(AudioLaneHeight)) {
                         lane.forEach { overlay ->
                             FreeBlock(
@@ -230,25 +249,52 @@ fun Timeline(
     }
 }
 
+/**
+ * Time marks along the top of the tracks. The ruler is as wide as the whole
+ * timeline (up to 150,000 px, ~850 marks), so it draws only the marks on
+ * screen — [visibleFromPx] is read while drawing, so scrolling redraws it and
+ * recomposes nothing — and measures every label against the same fixed width,
+ * so the text measurer's cache serves each label after its first appearance.
+ */
 @Composable
-private fun Ruler(totalUs: Long, pxPerSec: Float) {
-    val measurer = rememberTextMeasurer()
+private fun Ruler(totalUs: Long, pxPerSec: Float, visibleFromPx: () -> Float, viewportPx: Float) {
+    val measurer = rememberTextMeasurer(cacheSize = 32)
     val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val style = remember(labelColor) { TextStyle(color = labelColor, fontSize = 9.sp) }
     val minSpacingPx = with(LocalDensity.current) { 64.dp.toPx() }
+    // Marks are at least minSpacingPx apart, so a label never needs more.
+    val labelWidthPx = (minSpacingPx - 4f).toInt().coerceAtLeast(1)
     val step = remember(pxPerSec) {
         listOf(0.5f, 1f, 2f, 5f, 10f, 15f, 30f, 60f, 120f, 300f, 600f).firstOrNull { it * pxPerSec >= minSpacingPx } ?: 600f
     }
     Canvas(Modifier.fillMaxWidth().height(18.dp)) {
-        val totalSec = totalUs / 1_000_000f
-        var s = 0f
-        while (s <= totalSec) {
-            val x = s * pxPerSec
+        val ticks = rulerTicks(totalUs / 1_000_000f, step, pxPerSec, visibleFromPx(), viewportPx, labelWidthPx + 4f)
+        for (k in ticks) {
+            val seconds = k * step
+            val x = seconds * pxPerSec
             drawLine(labelColor, Offset(x, size.height * 0.55f), Offset(x, size.height), strokeWidth = 1.5f)
-            val label = formatDuration((s * 1000).toLong())
-            drawLabel(measurer, label, Offset(x + 4f, 0f), androidx.compose.ui.text.TextStyle(color = labelColor, fontSize = 9.sp))
-            s += step
+            val label = measurer.measure(
+                formatDuration((seconds * 1000).toLong()), style,
+                overflow = TextOverflow.Clip, softWrap = false, maxLines = 1,
+                constraints = Constraints(maxWidth = labelWidthPx),
+            )
+            drawLabel(label, Offset(x + 4f, 0f))
         }
     }
+}
+
+/**
+ * The marks k × [stepSec] (k from 0, up to the end of a [totalSec] timeline)
+ * that land between [fromPx] and [fromPx] + [widthPx] — and those up to
+ * [labelPx] before it, whose labels run on screen.
+ */
+internal fun rulerTicks(totalSec: Float, stepSec: Float, pxPerSec: Float, fromPx: Float, widthPx: Float, labelPx: Float): IntRange {
+    if (!(stepSec > 0f && pxPerSec > 0f && totalSec >= 0f && fromPx.isFinite() && widthPx >= 0f)) return IntRange.EMPTY
+    val tickPx = stepSec * pxPerSec
+    val last = floor(totalSec / stepSec).toInt()
+    val first = ceil((fromPx - labelPx) / tickPx).toInt().coerceAtLeast(0)
+    val end = floor((fromPx + widthPx) / tickPx).toInt().coerceAtMost(last)
+    return first..end
 }
 
 @Composable

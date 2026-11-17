@@ -72,6 +72,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -137,7 +138,12 @@ fun EditorScreen(projectId: String, onClose: () -> Unit) {
     val vm: EditorViewModel = viewModel(key = "editor-$projectId", factory = EditorViewModel.factory(projectId))
     val history by vm.history.collectAsStateWithLifecycle()
     val selection by vm.selection.collectAsStateWithLifecycle()
-    val playhead by vm.playheadUs.collectAsStateWithLifecycle()
+    // The playhead moves 30 times a second while playing. Reading it here would
+    // recompose the whole editor each time, so it is handed down as a function
+    // and read only by what shows it (the time, the timeline, a few panels);
+    // buttons that act at the playhead read vm.playheadUs.value when tapped.
+    val playheadState = vm.playheadUs.collectAsStateWithLifecycle()
+    val playhead: () -> Long = remember(playheadState) { { playheadState.value } }
     val playing by vm.playing.collectAsStateWithLifecycle()
     val aspect by vm.aspect.collectAsStateWithLifecycle()
     val previewError by vm.previewError.collectAsStateWithLifecycle()
@@ -318,8 +324,11 @@ fun EditorScreen(projectId: String, onClose: () -> Unit) {
                         )
                         if (tool == Tool.COVER && selectedClip != null) {
                             val start = project.clipStartUs(selectedClip.id)
+                            val end = start + selectedClip.durationUs
                             val cover = selectedClip.picture.cover
-                            if (cover != null && playhead in start until start + selectedClip.durationUs) {
+                            // Recomposes when the playhead enters or leaves the clip, not as it moves.
+                            val inClip by remember(start, end) { derivedStateOf { playhead() in start until end } }
+                            if (cover != null && inClip) {
                                 CropOverlay(
                                     rect = cover,
                                     ratio = null,
@@ -363,8 +372,8 @@ fun EditorScreen(projectId: String, onClose: () -> Unit) {
                 canUndo = h.canUndo,
                 canRedo = h.canRedo,
                 onPlay = vm::togglePlay,
-                onStepBack = { vm.scrubTo(project.frameRate.step(playhead, forward = false)) },
-                onStepForward = { vm.scrubTo(project.frameRate.step(playhead, forward = true)) },
+                onStepBack = { vm.scrubTo(project.frameRate.step(vm.playheadUs.value, forward = false)) },
+                onStepForward = { vm.scrubTo(project.frameRate.step(vm.playheadUs.value, forward = true)) },
                 onUndo = vm::undo,
                 onRedo = vm::redo,
             )
@@ -375,7 +384,6 @@ fun EditorScreen(projectId: String, onClose: () -> Unit) {
                         project = project,
                         selection = selection,
                         tab = activeTab,
-                        playheadUs = playhead,
                         vm = vm,
                         openTool = { tool = it },
                         addClip = { clipPicker.launch(arrayOf("video/*")) },
@@ -556,7 +564,6 @@ private fun actionsFor(
     project: Project,
     selection: Selection,
     tab: DockTab,
-    playheadUs: Long,
     vm: EditorViewModel,
     openTool: (Tool) -> Unit,
     addClip: () -> Unit,
@@ -570,7 +577,7 @@ private fun actionsFor(
     Selection.None -> when (tab) {
         DockTab.EDIT -> listOf(
             EditorAction(Icons.Filled.VideoLibrary, stringResource(R.string.action_add_clip), onClick = addClip),
-            EditorAction(Icons.Filled.ContentCut, stringResource(R.string.action_split), project.clips.isNotEmpty()) { vm.edit { it.splitAt(playheadUs) } },
+            EditorAction(Icons.Filled.ContentCut, stringResource(R.string.action_split), project.clips.isNotEmpty()) { vm.edit { it.splitAt(vm.playheadUs.value) } },
             EditorAction(Icons.Filled.PictureInPictureAlt, stringResource(R.string.editor_add_overlay), project.clips.isNotEmpty(), addOverlay),
             EditorAction(Icons.Filled.Bookmark, stringResource(R.string.editor_markers), project.clips.isNotEmpty()) { openTool(Tool.MARKERS) },
             EditorAction(Icons.Filled.DriveFileRenameOutline, stringResource(R.string.action_rename), onClick = rename),
@@ -599,7 +606,7 @@ private fun actionsFor(
     is Selection.Clip -> {
         val clip = project.clips.firstOrNull { it.id == selection.id }
         listOf(
-            EditorAction(Icons.Filled.ContentCut, stringResource(R.string.action_split)) { vm.edit { it.splitAt(playheadUs) } },
+            EditorAction(Icons.Filled.ContentCut, stringResource(R.string.action_split)) { vm.edit { it.splitAt(vm.playheadUs.value) } },
             EditorAction(Icons.Filled.Edit, stringResource(R.string.tool_trim)) { openTool(Tool.TRIM) },
             EditorAction(Icons.Filled.Speed, stringResource(R.string.tool_speed)) { openTool(Tool.SPEED) },
             EditorAction(Icons.Filled.SettingsEthernet, stringResource(R.string.pro_precision)) { openTool(Tool.PRECISION) },
@@ -608,7 +615,7 @@ private fun actionsFor(
             EditorAction(Icons.Filled.Tune, stringResource(R.string.editor_clip_grade)) { openTool(Tool.CLIP_GRADE) },
             EditorAction(Icons.Filled.VisibilityOff, stringResource(R.string.editor_cover)) {
                 val start = project.clipStartUs(selection.id)
-                if (clip != null && playheadUs !in start until start + clip.durationUs) vm.scrubTo(start)
+                if (clip != null && vm.playheadUs.value !in start until start + clip.durationUs) vm.scrubTo(start)
                 openTool(Tool.COVER)
             },
             EditorAction(Icons.AutoMirrored.Filled.VolumeUp, stringResource(R.string.tool_volume), clip?.source?.hasAudio == true && clip.audioDetached.not()) { openTool(Tool.VOLUME) },
@@ -628,7 +635,7 @@ private fun actionsFor(
     }
     is Selection.Overlay -> listOf(
         EditorAction(Icons.Filled.PictureInPictureAlt, stringResource(R.string.editor_overlay_settings)) { openTool(Tool.OVERLAY) },
-        EditorAction(Icons.Filled.ContentCut, stringResource(R.string.action_split)) { vm.edit { it.splitOverlay(selection.id, playheadUs) } },
+        EditorAction(Icons.Filled.ContentCut, stringResource(R.string.action_split)) { vm.edit { it.splitOverlay(selection.id, vm.playheadUs.value) } },
         EditorAction(Icons.Filled.Delete, stringResource(R.string.action_delete)) {
             vm.edit { p -> p.copy(overlays = p.overlays.filterNot { it.id == selection.id }) }
         },
@@ -636,7 +643,7 @@ private fun actionsFor(
     is Selection.Audio -> {
         val clip = project.audio.firstOrNull { it.id == selection.id }
         listOfNotNull(
-            EditorAction(Icons.Filled.ContentCut, stringResource(R.string.action_split)) { vm.edit { it.splitAudioAt(selection.id, playheadUs) } },
+            EditorAction(Icons.Filled.ContentCut, stringResource(R.string.action_split)) { vm.edit { it.splitAudioAt(selection.id, vm.playheadUs.value) } },
             EditorAction(Icons.Filled.Edit, stringResource(R.string.tool_trim)) { openTool(Tool.TRIM) },
             EditorAction(Icons.AutoMirrored.Filled.VolumeUp, stringResource(R.string.tool_volume)) { openTool(Tool.VOLUME) },
             EditorAction(Icons.Filled.Gradient, stringResource(R.string.tool_fades)) { openTool(Tool.AUDIO_FADES) },
@@ -692,7 +699,7 @@ private fun ToolContent(
     vm: EditorViewModel,
     project: Project,
     selection: Selection,
-    playheadUs: Long,
+    playheadUs: () -> Long,
     exportSettings: ExportSettings,
     onExportSettings: (ExportSettings) -> Unit,
     cropRatio: CropRatio,
@@ -715,12 +722,12 @@ private fun ToolContent(
     when (tool) {
         Tool.NONE -> Unit
         Tool.TRIM -> {
-            clip?.let { ClipTrimPanel(vm, it, playheadUs) }
+            clip?.let { c -> WithPlayhead(playheadUs) { ClipTrimPanel(vm, c, it) } }
             audio?.let { AudioTrimPanel(vm, it) }
         }
         Tool.SPEED -> clip?.let {
             SpeedPanel(vm, it)
-            RampPanel(vm, project, it, playheadUs)
+            WithPlayhead(playheadUs) { p -> RampPanel(vm, project, it, p) }
         }
         Tool.PRECISION -> clip?.let { PrecisionPanel(vm, project, it) }
         Tool.ANGLES -> clip?.let { AnglesPanel(vm, it) { addAngle(it.id) } }
@@ -736,7 +743,7 @@ private fun ToolContent(
                 Text(stringResource(R.string.pro_add_caption))
             }
         }
-        Tool.MOTION -> clip?.let { ClipMotionPanel(vm, project, it, playheadUs) }
+        Tool.MOTION -> clip?.let { c -> WithPlayhead(playheadUs) { ClipMotionPanel(vm, project, c, it) } }
         Tool.CLIP_GRADE -> clip?.let { ClipGradePanel(vm, it) { addLut(it.id) } }
         Tool.COVER -> clip?.let { selected ->
             val hasCover = selected.picture.cover != null
@@ -750,7 +757,7 @@ private fun ToolContent(
             }) { Text(stringResource(if (hasCover) R.string.editor_remove_cover else R.string.editor_add_cover)) }
             val start = project.clipStartUs(selected.id)
             TextButton(enabled = selected.angleId == null, onClick = {
-                trackCover(selected, selected.sourceAt(playheadUs - start).coerceAtMost(selected.trimEndUs - 1))
+                trackCover(selected, selected.sourceAt(playheadUs() - start).coerceAtMost(selected.trimEndUs - 1))
             }) { Text(stringResource(R.string.pro_track_region)) }
             if (selected.picture.trackedCover != null) {
                 TextButton(onClick = { vm.edit { p -> p.updateClipPicture(selected.id) { it.copy(trackedCover = null) } } }) {
@@ -761,7 +768,7 @@ private fun ToolContent(
         Tool.OVERLAY -> (selection as? Selection.Overlay)?.let { target ->
             project.overlays.firstOrNull { it.id == target.id }?.let { OverlayPanel(vm, it) }
         }
-        Tool.MARKERS -> MarkerPanel(vm, project, playheadUs)
+        Tool.MARKERS -> WithPlayhead(playheadUs) { MarkerPanel(vm, project, it) }
         Tool.VOLUME -> {
             clip?.let { c ->
                 ClipVolumePanel(vm, c)
@@ -777,8 +784,8 @@ private fun ToolContent(
             }
         }
         Tool.AUDIO_FADES -> audio?.let { AudioFadesPanel(vm, it) }
-        Tool.AUDIO_POSITION -> audio?.let { AudioPositionPanel(vm, it, playheadUs) }
-        Tool.TEXT -> text?.let { TextPanel(vm, it, playheadUs) }
+        Tool.AUDIO_POSITION -> audio?.let { a -> WithPlayhead(playheadUs) { AudioPositionPanel(vm, a, it) } }
+        Tool.TEXT -> text?.let { t -> WithPlayhead(playheadUs) { TextPanel(vm, t, it) } }
         Tool.CROP -> CropPanel(vm, project, cropRatio, onCropRatio)
         Tool.CANVAS -> CanvasPanel(vm, project)
         Tool.FILTERS -> FiltersPanel(vm, project)
@@ -789,6 +796,15 @@ private fun ToolContent(
             exportSettings, onExportSettings, pendingExports, bundleBusy, saveBundle, resumeExport, discardExport, onExport,
         )
     }
+}
+
+/**
+ * Reads the playhead in a scope of its own, so that as it moves only [content]
+ * recomposes, not the tool sheet or the editor around it.
+ */
+@Composable
+private fun WithPlayhead(playheadUs: () -> Long, content: @Composable (Long) -> Unit) {
+    content(playheadUs())
 }
 
 private fun toolTitle(t: Tool) = when (t) {

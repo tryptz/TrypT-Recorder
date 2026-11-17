@@ -622,6 +622,17 @@ every step, since each rebuild replaces decoders, video graph and mixer. A
 rebuild that fails drops the player instead of leaving it half set up, and
 every call into the player from the screen is guarded.
 
+**What playback redraws.** The playhead changes 30 times a second while
+playing, and the mixer's meters as often. Neither is read where the editor is
+composed: the playhead goes down as a function, read only by the time, the
+step buttons' enabled state (derived, so they change only at the ends), the
+timeline's scroll effect, the mixer's seek row and the few tool panels that
+show it (each in a scope of its own); buttons that act at the playhead read
+it when tapped. The meters are read in their own drawing. The timeline ruler
+draws only the marks on screen, measured against a fixed width so the text
+measurer's cache serves them; a long project used to measure ~850 labels per
+redraw. Nothing here has been profiled on a phone.
+
 Known limits: exports run in-app (the screen is kept on while one runs) rather
 than in a background service; preview of a very long project at high zoom is
 capped to keep the timeline under Compose's layout size limit; "show touches"

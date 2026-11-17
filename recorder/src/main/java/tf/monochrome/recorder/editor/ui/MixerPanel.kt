@@ -55,6 +55,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -107,8 +108,12 @@ private const val unityFader = 0.76f
 private const val maxInserts = 16
 
 @Composable
-internal fun MixerPanel(vm: EditorViewModel, project: Project, playing: Boolean, playhead: Long, close: () -> Unit) {
-    val peaks by vm.mixerPeaks.collectAsStateWithLifecycle()
+internal fun MixerPanel(vm: EditorViewModel, project: Project, playing: Boolean, playhead: () -> Long, close: () -> Unit) {
+    // Meters update 30 times a second. They are read inside the meters' own
+    // drawing (see PeakMeter), so a new reading redraws them and recomposes
+    // nothing; reading them here would rebuild the whole mixer each time.
+    val peaksState = vm.mixerPeaks.collectAsStateWithLifecycle()
+    val peaks: (Int) -> Float = remember(peaksState) { { i -> peaksState.value.getOrElse(i) { 0f } } }
     var selected by rememberSaveable { mutableIntStateOf(0) }
     var showEffects by rememberSaveable { mutableStateOf(false) }
     var picking by rememberSaveable { mutableStateOf(false) }
@@ -265,8 +270,7 @@ internal fun MixerPanel(vm: EditorViewModel, project: Project, playing: Boolean,
                                     selected = selected == i,
                                     master = role == null,
                                     solo = role != null && project.mixer.solo == role,
-                                    peakLeft = if (playing) peaks.getOrElse(i * 2) { 0f } else 0f,
-                                    peakRight = if (playing) peaks.getOrElse(i * 2 + 1) { 0f } else 0f,
+                                    peak = { side -> if (playing) peaks(i * 2 + side) else 0f },
                                     select = { selected = i },
                                     openEffects = { selected = i; expanded = null; showEffects = true },
                                     gain = { value -> change(role, true) { it.copy(gain = value) } },
@@ -310,23 +314,7 @@ internal fun MixerPanel(vm: EditorViewModel, project: Project, playing: Boolean,
                     )
                 }
                 HorizontalDivider(color = Color(0xFF363741))
-                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = vm::togglePlay) {
-                        Icon(
-                            if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                            stringResource(if (playing) R.string.action_pause else R.string.action_play),
-                        )
-                    }
-                    Text(formatMixerTime(playhead), color = mutedText, fontFamily = FontFamily.Monospace)
-                    Slider(
-                        playhead.toFloat().coerceIn(0f, project.durationUs.toFloat().coerceAtLeast(1f)),
-                        { vm.scrubTo(it.toLong()) },
-                        modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
-                        valueRange = 0f..project.durationUs.toFloat().coerceAtLeast(1f),
-                        colors = SliderDefaults.colors(thumbColor = accents.last(), activeTrackColor = accents.last()),
-                    )
-                    Text(formatMixerTime(project.durationUs), color = mutedText, fontFamily = FontFamily.Monospace)
-                }
+                MixerTransport(vm, playing, project.durationUs, playhead)
             }
         }
         if (picking) {
@@ -348,8 +336,8 @@ private fun MixerStrip(
     selected: Boolean,
     master: Boolean,
     solo: Boolean,
-    peakLeft: Float,
-    peakRight: Float,
+    /** The latest peak of side 0 (left) or 1 (right); read only while drawing. */
+    peak: (Int) -> Float,
     select: () -> Unit,
     openEffects: () -> Unit,
     gain: (Float) -> Unit,
@@ -400,7 +388,7 @@ private fun MixerStrip(
                 onValueChangeFinished = commit,
                 colors = SliderDefaults.colors(thumbColor = accent, activeTrackColor = accent, inactiveTrackColor = Color(0xFF111216)),
             )
-            PeakMeter(peakLeft, peakRight, accent, Modifier.width(13.dp).fillMaxHeight().padding(vertical = 14.dp))
+            PeakMeter(peak, accent, Modifier.width(13.dp).fillMaxHeight().padding(vertical = 14.dp))
         }
         Text(
             if (mix.gain <= 0f) "−∞" else "%+.1f".format(gainDb(mix.gain)),
@@ -412,13 +400,47 @@ private fun MixerStrip(
         )
         StripButton("M", stringResource(R.string.pro_mute), mix.muted, accent, mute)
         if (!master) StripButton("S", stringResource(R.string.pro_solo), solo, accent, toggleSolo)
-        else Text(
-            stringResource(R.string.mixer_peak),
-            Modifier.height(44.dp).padding(top = 12.dp),
-            color = if (maxOf(peakLeft, peakRight) >= 1f) Color(0xFFFF806E) else mutedText,
-            style = MaterialTheme.typography.labelSmall,
-        )
+        else ClipLabel(peak)
     }
+}
+
+/**
+ * Play, the time and a seek bar. The only part of the mixer that reads the
+ * playhead, so only this row follows it during playback.
+ */
+@Composable
+private fun MixerTransport(vm: EditorViewModel, playing: Boolean, durationUs: Long, playhead: () -> Long) {
+    val end = durationUs.toFloat().coerceAtLeast(1f)
+    val time by remember(playhead) { derivedStateOf { formatMixerTime(playhead()) } }
+    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        IconButton(onClick = vm::togglePlay) {
+            Icon(
+                if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                stringResource(if (playing) R.string.action_pause else R.string.action_play),
+            )
+        }
+        Text(time, color = mutedText, fontFamily = FontFamily.Monospace)
+        Slider(
+            playhead().toFloat().coerceIn(0f, end),
+            { vm.scrubTo(it.toLong()) },
+            modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+            valueRange = 0f..end,
+            colors = SliderDefaults.colors(thumbColor = accents.last(), activeTrackColor = accents.last()),
+        )
+        Text(formatMixerTime(durationUs), color = mutedText, fontFamily = FontFamily.Monospace)
+    }
+}
+
+/** "Peak", lit while the master clips: recomposes only when that changes. */
+@Composable
+private fun ClipLabel(peak: (Int) -> Float) {
+    val clipping by remember(peak) { derivedStateOf { maxOf(peak(0), peak(1)) >= 1f } }
+    Text(
+        stringResource(R.string.mixer_peak),
+        Modifier.height(44.dp).padding(top = 12.dp),
+        color = if (clipping) Color(0xFFFF806E) else mutedText,
+        style = MaterialTheme.typography.labelSmall,
+    )
 }
 
 @Composable
@@ -450,13 +472,15 @@ private fun Modifier.verticalFader(): Modifier = layout { measurable, constraint
 }.graphicsLayer { rotationZ = -90f }
 
 @Composable
-private fun PeakMeter(left: Float, right: Float, accent: Color, modifier: Modifier) {
+private fun PeakMeter(level: (Int) -> Float, accent: Color, modifier: Modifier) {
+    // [level] is read here, in the draw phase: a new reading redraws the meter
+    // without recomposing or measuring anything.
     Canvas(modifier) {
         val segments = 30
         val segmentHeight = size.height / segments
         val laneWidth = (size.width - 2.dp.toPx()) / 2f
         for (channel in 0..1) {
-            val peak = if (channel == 0) left else right
+            val peak = level(channel)
             val fraction = ((gainDb(peak) - minimumDb) / -minimumDb).coerceIn(0f, 1f)
             for (segment in 0 until segments) {
                 val lit = segment < fraction * segments

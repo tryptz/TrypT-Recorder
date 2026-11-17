@@ -51,6 +51,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -551,10 +552,16 @@ internal fun Segmented(options: List<String>, selected: Int, onSelect: (Int) -> 
 
 // ── Transport ──────────────────────────────────────────────────────────
 
-/** Time on the left, play in the middle (with a frame step each side), undo and redo on the right. */
+/**
+ * Time on the left, play in the middle (with a frame step each side), undo and redo on the right.
+ *
+ * [playheadUs] is read only by the time and by whether a step button is
+ * enabled, each derived so it recomposes when what it shows changes — the
+ * playhead itself changes 30 times a second during playback.
+ */
 @Composable
 internal fun Transport(
-    playheadUs: Long,
+    playheadUs: () -> Long,
     durationUs: Long,
     playing: Boolean,
     canPlay: Boolean,
@@ -567,20 +574,23 @@ internal fun Transport(
     onRedo: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val time by remember(playheadUs, durationUs) { derivedStateOf { buildTime(playheadUs(), durationUs) } }
+    val atStart by remember(playheadUs) { derivedStateOf { playheadUs() <= 0 } }
+    val atEnd by remember(playheadUs, durationUs) { derivedStateOf { playheadUs() >= durationUs } }
     Box(
         modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 4.dp),
     ) {
         Text(
-            buildTime(playheadUs, durationUs),
+            time,
             style = MaterialTheme.typography.titleSmall,
             modifier = Modifier
                 .align(Alignment.CenterStart)
                 .padding(start = 8.dp),
         )
         Row(Modifier.align(Alignment.Center), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onStepBack, enabled = canPlay && playheadUs > 0) {
+            IconButton(onClick = onStepBack, enabled = canPlay && !atStart) {
                 Icon(Icons.Filled.SkipPrevious, stringResource(R.string.editor_step_back))
             }
             IconButton(onClick = onPlay, enabled = canPlay, modifier = Modifier.size(56.dp)) {
@@ -590,7 +600,7 @@ internal fun Transport(
                     modifier = Modifier.size(36.dp),
                 )
             }
-            IconButton(onClick = onStepForward, enabled = canPlay && playheadUs < durationUs) {
+            IconButton(onClick = onStepForward, enabled = canPlay && !atEnd) {
                 Icon(Icons.Filled.SkipNext, stringResource(R.string.editor_step_forward))
             }
         }
