@@ -269,6 +269,7 @@
     <string name="export_resolution">Resolution</string>
     <string name="export_quality">Quality</string>
     <string name="action_save">Save</string>
+    <string name="pro_tracking_progress">Tracking the cover… %1$d%%</string>
     <string name="editor_export_settings">Export settings</string>
     <string name="editor_export_more">More</string>
     <string name="export_format_audio">Sound</string>

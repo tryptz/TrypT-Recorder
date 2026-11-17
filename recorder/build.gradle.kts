@@ -43,8 +43,8 @@ android {
         targetSdk = 36
         // No 32-bit x86: only old emulators run it. x86_64 stays for ChromeOS.
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
-        versionCode = 17
-        versionName = "2.0.0-preview.10"
+        versionCode = 18
+        versionName = "2.0.0-preview.11"
     }
 
     // The app is in English only, but AndroidX libraries bring their strings
@@ -99,6 +99,12 @@ android {
     buildFeatures {
         compose = true
     }
+}
+
+// FxParametersNativeTest reads the C++ effect headers: make them test inputs,
+// so a header-only change reruns it instead of leaving it "up to date".
+tasks.withType<Test>().configureEach {
+    inputs.dir("src/main/cpp").withPathSensitivity(PathSensitivity.RELATIVE)
 }
 
 dependencies {

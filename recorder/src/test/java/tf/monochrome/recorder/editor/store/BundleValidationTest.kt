@@ -5,6 +5,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import tf.monochrome.recorder.editor.model.CubeLut
+import tf.monochrome.recorder.editor.model.LutColors
 import tf.monochrome.recorder.editor.model.SpeedKey
 import tf.monochrome.recorder.editor.music
 import tf.monochrome.recorder.editor.project
@@ -38,9 +39,9 @@ class BundleValidationTest {
     }
 
     @Test fun aLutMustHoldSizeCubedColours() {
-        val good = CubeLut("ok", 2, List(8) { 0 })
-        val short = CubeLut("short", 3, List(26) { 0 })
-        val huge = CubeLut("huge", 0, emptyList())
+        val good = CubeLut("ok", 2, LutColors(IntArray(8)))
+        val short = CubeLut("short", 3, LutColors(IntArray(26)))
+        val huge = CubeLut("huge", 0, LutColors(IntArray(0)))
         fun graded(lut: CubeLut) = withClip { it.copy(picture = it.picture.copy(grade = it.picture.grade.copy(lut = lut))) }
         assertTrue(BundleValidation.problems(graded(good)).isEmpty())
         assertEquals(1, BundleValidation.problems(graded(short)).size)

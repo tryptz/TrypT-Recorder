@@ -9,12 +9,10 @@ repository; this repository is its standalone home.
 ## Build and test
 
 ```
-./gradlew :recorder:testDebugUnitTest    # 239 JVM tests, no device
-
-./gradlew :recorder:testDebugUnitTest    # 235 JVM tests, no device
+./gradlew :recorder:testDebugUnitTest    # 274 JVM tests, no device
 ./gradlew :recorder:lintDebug            # clean: 0 errors, 0 warnings
 ./gradlew :recorder:assembleDebug        # signed with the committed recorder/debug.keystore
-./gradlew :recorder:assembleRelease      # R8-minified, ~7.5 MB
+./gradlew :recorder:assembleRelease      # R8-minified, ~7.3 MB
 ```
 
 The app is in English only, and the build keeps only English resources
@@ -155,13 +153,10 @@ The rule that keeps it testable without a phone: decisions live in pure Kotlin
 (`CapturePlanner`, `PauseClock`, `Pcm`, `AudioTimeline`, `SessionKeys`,
 `ButtonVisibility`, `StorageGuard`, `CleanupRules`, `BundleValidation`,
 `Timeline`, `History`, `ExportPlanner`, `FrameRetimer`, `CropBox`, `Grain`,
-and for GIFs `FrameSampler`, `YuvFrame`, `GifPalette`, `GifEncoder`), and the
+`ClipTiming`, `CubeLut`, `CoverTracking` / `FramePicker` / `LumaGrid`,
+`PublishGate`, `MixerSnapshot`, `rulerTicks`, `labelRoom`, and for GIFs
+`FrameSampler`, `YuvFrame`, `GifPalette`, `GifEncoder`), and the
 Android/Media3 layers only carry them out.
-
-(`CapturePlanner`, `PauseClock`, `Pcm`, `Timeline`, `History`,
-`ExportPlanner`, `FrameRetimer`, `CropBox`, `Grain`, `ClipTiming`, `CubeLut`,
-`CoverTracking` / `FramePicker` / `LumaGrid`, `PublishGate`, `MixerSnapshot`, and for GIFs
-`FrameSampler`, `YuvFrame`, `GifPalette`, `GifEncoder`), and the Android/Media3 layers only carry them out.
 
 ### Why things are the way they are
 

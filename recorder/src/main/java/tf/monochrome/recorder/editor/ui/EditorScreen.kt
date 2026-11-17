@@ -1,5 +1,7 @@
 package tf.monochrome.recorder.editor.ui
 
+import androidx.compose.material3.LinearProgressIndicator
+import tf.monochrome.recorder.RecorderApp
 import android.view.TextureView
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -147,6 +149,7 @@ fun EditorScreen(projectId: String, onClose: () -> Unit) {
     val playing by vm.playing.collectAsStateWithLifecycle()
     val aspect by vm.aspect.collectAsStateWithLifecycle()
     val previewError by vm.previewError.collectAsStateWithLifecycle()
+    val trackProgress by vm.trackProgress.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
     val exportState by ExportManager.state.collectAsStateWithLifecycle()
     val bundleBusy by vm.bundleBusy.collectAsStateWithLifecycle()
@@ -170,7 +173,9 @@ fun EditorScreen(projectId: String, onClose: () -> Unit) {
     var tracking by remember { mutableStateOf<Pair<VideoClip, Long>?>(null) }
 
     val bundleWriter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
-        if (uri != null) scope.launch { vm.saveBundle(uri) }
+        // The app's scope, not this screen's: leaving the editor mid-save used
+        // to cancel it and leave a partial zip where the user chose to save.
+        if (uri != null) RecorderApp.instance.appScope.launch { vm.saveBundle(uri) }
     }
     val lutPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         val id = lutTarget
@@ -349,6 +354,23 @@ fun EditorScreen(projectId: String, onClose: () -> Unit) {
                                 onDragEnd = vm::commit,
                                 modifier = Modifier.fillMaxSize(),
                             )
+                        }
+                    }
+                    trackProgress?.let { progress ->
+                        // Cover tracking runs over the whole clip; show how far it is.
+                        Column(
+                            Modifier
+                                .align(Alignment.TopCenter)
+                                .fillMaxWidth()
+                                .background(Color(0xAA000000))
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                        ) {
+                            Text(
+                                stringResource(R.string.pro_tracking_progress, (progress * 100).toInt()),
+                                color = Color.White,
+                                style = MaterialTheme.typography.labelMedium,
+                            )
+                            LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
                         }
                     }
                     previewError?.let {

@@ -62,9 +62,12 @@ simplified and cannot.
 ```
 
 All four are the gate for any change. Decisions live in pure Kotlin
-(`CapturePlanner`, `PauseClock`, `Pcm`, `AacPicker`, `FrameTiming`,
-`MediaDetails`, `Timeline`, `History`, `ExportPlanner`, `FrameRetimer`,
-`CropBox`, `Grain`, `FrameSampler`, `YuvFrame`, `GifPalette`, `GifEncoder`) precisely so the tests
+(`CapturePlanner`, `PauseClock`, `Pcm`, `AacPicker`, `AudioTimeline`,
+`SessionKeys`, `ButtonVisibility`, `StorageGuard`, `CleanupRules`,
+`BundleValidation`, `FrameTiming`, `MediaDetails`, `Timeline`, `ClipTiming`,
+`History`, `ExportPlanner`, `FrameRetimer`, `PublishGate`, `MixerSnapshot`,
+`CubeLut`, `CoverTracking`, `CropBox`, `Grain`, `FrameSampler`, `YuvFrame`,
+`GifPalette`, `GifEncoder`) precisely so the tests
 can hold them; when you change one of those rules, change its test, and never
 loosen a test to make it pass.
 
