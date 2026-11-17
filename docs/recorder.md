@@ -698,6 +698,12 @@ draws only the marks on screen, measured against a fixed width so the text
 measurer's cache serves them; a long project used to measure ~850 labels per
 redraw. Nothing here has been profiled on a phone.
 
+**Cancelling an export** stops it and discards the file up to the moment the
+finished file starts being published to the gallery (`PublishGate`). From
+then on the file is there to stay, so a cancel is ignored and the export
+reports done; it used to report nothing while the file stayed. The export's
+composition is built off the main thread, like the preview's.
+
 Known limits: exports run in-app (the screen is kept on while one runs) rather
 than in a background service; preview of a very long project at high zoom is
 capped to keep the timeline under Compose's layout size limit; "show touches"

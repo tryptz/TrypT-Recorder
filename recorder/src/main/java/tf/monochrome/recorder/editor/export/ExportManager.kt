@@ -85,6 +85,9 @@ object ExportManager {
     private var poll: Job? = null
     /** What runs after Transformer: making the GIF, saving the file. */
     private var work: Job? = null
+
+    /** While a finished export is being saved: whether a cancel still stops it. */
+    @Volatile private var publishGate: PublishGate? = null
     private val tempFiles = mutableListOf<File>()
 
     /** Progress, 0..100, that [poll] publishes; null while unknown. */
@@ -189,9 +192,12 @@ object ExportManager {
                         }.close()
                     }
                 }
+                // Shared with the preview's analysis of the same sound, if that is running.
                 val music = if (plan.mode.picture) MusicLinkAnalysis.prepare(app, job.project) else null
+                // Off the main thread: the silence files gaps play are disk work.
+                val composition = withContext(Dispatchers.IO) { CompositionFactory.build(app, plan, music = music) }
                 work = null
-                render(app, plan, job.name, music)
+                render(app, plan, job.name, composition)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -217,11 +223,11 @@ object ExportManager {
         render(context.applicationContext, plan, name)
     }
 
-    private fun render(app: Context, plan: ExportPlan, name: String, music: MusicLinkTimeline? = null) {
+    private fun render(app: Context, plan: ExportPlan, name: String, built: Composition? = null) {
         val audioOnly = plan.mode == ExportMode.AUDIO_ONLY
         val gifFps = plan.gifFrameRate
 
-        val composition = runCatching { CompositionFactory.build(app, plan, music = music) }.getOrElse {
+        val composition = built ?: runCatching { CompositionFactory.build(app, plan) }.getOrElse {
             Log.e(TAG, "composition", it)
             _state.value = ExportState.Failed(it.message ?: it.javaClass.simpleName)
             return
@@ -282,6 +288,11 @@ object ExportManager {
 
     @MainThread
     fun cancel() {
+        // Too late: the file is already being published, and will be in the
+        // gallery. The cancel is ignored and the export ends as done, rather
+        // than reporting nothing while the file stays.
+        if (publishGate?.cancel() == false) return
+        publishGate = null
         val app = activeContext
         val job = activeJob
         transformer?.cancel()
@@ -351,6 +362,7 @@ object ExportManager {
         poll?.cancel()
         transformer = null
         val job = activeJob
+        val gate = PublishGate().also { publishGate = it }
         work = scope.launch {
             val saved = try {
                 withContext(Dispatchers.IO) {
@@ -381,7 +393,7 @@ object ExportManager {
                                 }
                             }
                         }
-                        if (isActive) out.publish(resolver) else { out.discard(resolver); null }
+                        if (isActive && gate.beginPublish()) out.publish(resolver) else { out.discard(resolver); null }
                     } catch (e: Exception) {
                         out.discard(resolver)
                         throw e
@@ -404,6 +416,7 @@ object ExportManager {
             }
             tempFiles.clear()
             work = null
+            if (publishGate === gate) publishGate = null
             _state.value = if (saved != null) ExportState.Done(mode, saved, gif) else ExportState.Failed("Could not save the exported file")
         }
     }
