@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 10 and 11 (data_extraction_rules.xml is used from 12). Same rules. -->
+<full-backup-content>
+    <exclude domain="file" path="capture-sessions/" />
+    <exclude domain="file" path="bundles/" />
+    <exclude domain="file" path="recorder-music/" />
+    <exclude domain="file" path="export-queue.json" />
+    <exclude domain="file" path="last-crash.txt" />
+    <exclude domain="sharedpref" path="crash_log.xml" />
+</full-backup-content>

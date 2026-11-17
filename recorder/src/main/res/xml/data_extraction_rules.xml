@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+. Settings and drafts travel; what is large, can be fetched
+     again, or only means something on this phone does not: edit-ready stems,
+     imported bundles' media, downloaded music, the export queue (it points at
+     this phone's unfinished files) and the last crash report. The cache,
+     where exports are rendered, is never backed up. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="file" path="capture-sessions/" />
+        <exclude domain="file" path="bundles/" />
+        <exclude domain="file" path="recorder-music/" />
+        <exclude domain="file" path="export-queue.json" />
+        <exclude domain="file" path="last-crash.txt" />
+        <exclude domain="sharedpref" path="crash_log.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" path="capture-sessions/" />
+        <exclude domain="file" path="bundles/" />
+        <exclude domain="file" path="recorder-music/" />
+        <exclude domain="file" path="export-queue.json" />
+        <exclude domain="file" path="last-crash.txt" />
+        <exclude domain="sharedpref" path="crash_log.xml" />
+    </device-transfer>
+</data-extraction-rules>
