@@ -33,21 +33,13 @@ object MediaInspector {
 
     private class Scan(val bytes: Long, val samples: Long, val firstUs: Long, val lastUs: Long, val complete: Boolean, val times: LongArray, val timeCount: Int)
 
+    /**
+     * One MediaExtractor reads the formats and then scans each track in turn
+     * (it used to be opened three times, parsing the whole file each time).
+     * MediaMetadataRetriever, a parse of its own, is only asked for the frame
+     * count when a scan ran out of time before the end of a long video track.
+     */
     private fun inspectNow(context: Context, uri: Uri): MediaDetails? {
-        val r = MediaMetadataRetriever()
-        val durationUs: Long
-        val containerMime: String?
-        val rotation: Int
-        val frameCount: Long
-        try {
-            r.setDataSource(context, uri)
-            durationUs = (r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L) * 1000
-            containerMime = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_MIMETYPE)
-            rotation = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
-            frameCount = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_FRAME_COUNT)?.toLongOrNull() ?: 0L
-        } finally {
-            runCatching { r.release() }
-        }
         val size = runCatching {
             context.contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { c ->
                 if (c.moveToFirst() && !c.isNull(0)) c.getLong(0) else null
@@ -56,21 +48,26 @@ object MediaInspector {
 
         var video: VideoDetails? = null
         var audio: AudioDetails? = null
+        val containerMime: String?
+        var durationUs = 0L
         val ex = MediaExtractor()
         try {
             ex.setDataSource(context, uri, null)
-            for (i in 0 until ex.trackCount) {
-                val f = ex.getTrackFormat(i)
+            containerMime = runCatching { ex.metrics.getString(MediaExtractor.MetricsConstants.MIME_TYPE) }.getOrNull()
+                ?: context.contentResolver.getType(uri)
+            val formats = (0 until ex.trackCount).map { ex.getTrackFormat(it) }
+            durationUs = formats.maxOfOrNull { if (it.containsKey(MediaFormat.KEY_DURATION)) it.getLong(MediaFormat.KEY_DURATION) else 0L } ?: 0L
+            for ((i, f) in formats.withIndex()) {
                 val mime = f.getString(MediaFormat.KEY_MIME) ?: continue
                 val trackUs = if (f.containsKey(MediaFormat.KEY_DURATION)) f.getLong(MediaFormat.KEY_DURATION) else durationUs
                 val csd0 = csd0(f)
                 if (video == null && mime.startsWith("video/")) {
-                    val scan = scan(context, uri, i, keepTimes = true)
+                    val scan = scan(ex, i, keepTimes = true)
                     val avc = if (mime == MediaFormat.MIMETYPE_VIDEO_AVC) csd0?.let(Codecs::avcProfileLevel) else null
                     var w = f.getIntOrZero(MediaFormat.KEY_WIDTH)
                     var h = f.getIntOrZero(MediaFormat.KEY_HEIGHT)
-                    if (rotation % 180 != 0) w = h.also { h = w }
-                    val frames = if (frameCount > 0) frameCount else scan.samples
+                    if (f.getIntOrZero(MediaFormat.KEY_ROTATION) % 180 != 0) w = h.also { h = w }
+                    val frames = if (scan.complete) scan.samples else frameCount(context, uri) ?: scan.samples
                     video = VideoDetails(
                         codec = Codecs.video(mime),
                         profile = avc?.let { Codecs.avcProfile(it.first, it.second) },
@@ -84,7 +81,7 @@ object MediaInspector {
                         approximate = !scan.complete,
                     )
                 } else if (audio == null && mime.startsWith("audio/")) {
-                    val scan = scan(context, uri, i, keepTimes = false)
+                    val scan = scan(ex, i, keepTimes = false)
                     audio = AudioDetails(
                         codec = Codecs.audio(mime, csd0),
                         sampleRate = f.getIntOrZero(MediaFormat.KEY_SAMPLE_RATE),
@@ -101,16 +98,29 @@ object MediaInspector {
         return MediaDetails(Codecs.container(containerMime), durationUs, size, video, audio)
     }
 
+    /** The container's own frame count (exact, from its index); null if it does not say. */
+    private fun frameCount(context: Context, uri: Uri): Long? {
+        val r = MediaMetadataRetriever()
+        return try {
+            r.setDataSource(context, uri)
+            r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_FRAME_COUNT)?.toLongOrNull()?.takeIf { it > 0 }
+        } catch (e: Exception) {
+            null
+        } finally {
+            runCatching { r.release() }
+        }
+    }
+
     /** A whole track's bytes over its duration; a partial scan's over the time it covered. */
     private fun bitrate(scan: Scan, trackUs: Long): Long =
         if (scan.complete) Rates.bitrate(scan.bytes, trackUs)
         else Rates.bitrate(scan.bytes, scan.lastUs - scan.firstUs)
 
-    private fun scan(context: Context, uri: Uri, track: Int, keepTimes: Boolean): Scan {
-        val ex = MediaExtractor()
+    /** Walks one track of the shared extractor from its start, then leaves it unselected for the next. */
+    private fun scan(ex: MediaExtractor, track: Int, keepTimes: Boolean): Scan {
+        ex.selectTrack(track)
         try {
-            ex.setDataSource(context, uri, null)
-            ex.selectTrack(track)
+            ex.seekTo(0, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
             var times = LongArray(if (keepTimes) 4096 else 0)
             var timeCount = 0
             var bytes = 0L
@@ -138,7 +148,7 @@ object MediaInspector {
             }
             return Scan(bytes, samples, first.coerceAtLeast(0), last, complete, times, timeCount)
         } finally {
-            runCatching { ex.release() }
+            ex.unselectTrack(track)
         }
     }
 
