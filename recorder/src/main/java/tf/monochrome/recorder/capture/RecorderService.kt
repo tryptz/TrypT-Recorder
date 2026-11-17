@@ -21,6 +21,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
+import android.os.storage.StorageManager
 import android.provider.Settings
 import android.util.Log
 import android.view.Display
@@ -36,6 +37,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import tf.monochrome.recorder.MainActivity
@@ -43,6 +45,7 @@ import tf.monochrome.recorder.R
 import tf.monochrome.recorder.RecorderApp
 import tf.monochrome.recorder.media.MediaStoreFile
 import tf.monochrome.recorder.settings.AudioSource
+import tf.monochrome.recorder.settings.RecorderSettings
 
 /**
  * Foreground service that owns the capture and the floating record button.
@@ -56,6 +59,13 @@ import tf.monochrome.recorder.settings.AudioSource
  * Every start of a capture comes through [CaptureConsentActivity] with a fresh
  * consent result: on Android 14+ a consent token is good for one projection,
  * so there is nothing to cache.
+ *
+ * Nothing slow runs on the main thread. The projection is taken and its
+ * callback registered here, in that order (Android 14 requires both before
+ * any capture); everything after — encoder queries, the MediaStore row,
+ * codecs, AudioRecord and the VirtualDisplay — is set up on a background
+ * thread, and stopping (joining the encoder threads, publishing) runs there
+ * too, in the app's scope so it finishes even if the service is destroyed.
  */
 class RecorderService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -67,8 +77,16 @@ class RecorderService : Service() {
     private var recorder: ScreenRecorder? = null
     private var output: MediaStoreFile? = null
     private var countdownJob: Job? = null
+    private var storageJob: Job? = null
     private var stopping = false
     private var inForeground = false
+    private var destroyed = false
+    /** A recording is being set up off the main thread. */
+    private var preparing = false
+    /** Bumped whenever a start in progress is abandoned; a setup that finishes into an old one is torn down. */
+    private var startGeneration = 0
+    /** The button was taken away for a recording that has not produced its first frame yet. */
+    private var preRollHidden = false
 
     private val projectionCallback = object : MediaProjection.Callback() {
         // The user stopped sharing from the status bar, or another app took
@@ -88,7 +106,7 @@ class RecorderService : Service() {
         // onStartCommand had even run.
         scope.launch {
             combine(RecorderState.status, settings.settings) { status, s -> status to s }.collect { (status, s) ->
-                button?.setHidden(s.hideButtonWhileRecording && (status is CaptureStatus.Recording || status is CaptureStatus.Saving))
+                button?.setHidden(hideWanted(status, s))
                 if (inForeground) {
                     getSystemService(NotificationManager::class.java).notify(NOTIF_ID, buildNotification())
                 }
@@ -127,19 +145,35 @@ class RecorderService : Service() {
     }
 
     override fun onDestroy() {
+        destroyed = true
         countdownJob?.cancel()
-        recorder?.let { rec ->
-            recorder = null
-            val ok = rec.stop()
-            val saved = output?.let { if (ok) it.publish(contentResolver) else { it.discard(contentResolver); null } }
-            rec.finishSession(saved != null)
-            output = null
+        storageJob?.cancel()
+        // A setup still running is torn down when it finishes (onPrepared).
+        startGeneration++
+        preparing = false
+        val rec = recorder
+        val out = output
+        val proj = projection
+        recorder = null
+        output = null
+        projection = null
+        when {
+            // Joining the encoder threads takes up to seconds: never on the
+            // main thread. The save carries on in the app's scope.
+            rec != null -> {
+                stopping = true
+                RecorderState.setStatus(CaptureStatus.Saving)
+                finishRecording(rec, out, proj, reason = null)
+            }
+            else -> {
+                proj?.let { releaseProjection(it) }
+                // A save already under way sets Idle itself when it is done.
+                if (!stopping) RecorderState.setStatus(CaptureStatus.Idle)
+            }
         }
-        releaseProjection()
         button?.dismiss()
         button = null
         RecorderState.setButtonShown(false)
-        RecorderState.setStatus(CaptureStatus.Idle)
         scope.cancel()
         super.onDestroy()
     }
@@ -147,7 +181,7 @@ class RecorderService : Service() {
     // ── Capture ────────────────────────────────────────────────────────
 
     private fun startCapture(intent: Intent) {
-        if (RecorderState.status.value.isActive) {
+        if (RecorderState.status.value.isActive || projection != null || preparing || stopping) {
             refreshForeground()
             return
         }
@@ -187,7 +221,8 @@ class RecorderService : Service() {
                 delay(1000)
             }
             if (settings.current.hideButtonWhileRecording && button != null) {
-                button?.setHidden(true)
+                preRollHidden = true
+                applyButtonVisibility()
                 // Let SurfaceFlinger compose one frame without it before the
                 // first frame is captured.
                 delay(150)
@@ -196,50 +231,118 @@ class RecorderService : Service() {
         }
     }
 
+    /** Sets the recording up on a background thread; [onPrepared] takes it from there on main. */
     private fun beginRecording() {
         val proj = projection ?: return
         val s = settings.current
-        val spec = captureSpec()
-        val out = MediaStoreFile.create(contentResolver, MediaStoreFile.Kind.VIDEO, "Recording")
-        if (out == null) {
-            fail(getString(R.string.error_no_storage))
-            stopCapture()
-            return
-        }
         val audioPermitted = s.audioSource.needsRecordPermission &&
             checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        val generation = startGeneration
+        preparing = true
+        RecorderApp.instance.appScope.launch {
+            val prepared = withContext(Dispatchers.IO) { prepareRecording(proj, s, audioPermitted) }
+            onPrepared(generation, prepared)
+        }
+    }
+
+    private sealed interface Prepared {
+        class Started(val recorder: ScreenRecorder, val output: MediaStoreFile, val sessionMissing: Boolean) : Prepared
+        class Failed(val message: String) : Prepared
+    }
+
+    /** Off the main thread: everything from the encoder queries to the VirtualDisplay. */
+    private fun prepareRecording(proj: MediaProjection, s: RecorderSettings, audioPermitted: Boolean): Prepared {
+        val resolver = applicationContext.contentResolver
+        if (StorageGuard.isLow(allocatableBytes())) return Prepared.Failed(getString(R.string.error_storage_low_start))
+        val spec = captureSpec(s)
+        val out = MediaStoreFile.create(resolver, MediaStoreFile.Kind.VIDEO, "Recording")
+            ?: return Prepared.Failed(getString(R.string.error_no_storage))
         val session = if (s.editReady) runCatching {
             EditReadySession.open(applicationContext, out.uri.toString())
         }.onFailure { Log.w(TAG, "edit-ready storage unavailable", it) }.getOrNull() else null
-        if (s.editReady && session == null) toast(getString(R.string.pro_capture_session_unavailable))
         val rec = ScreenRecorder(proj, spec, session)
-        rec.onFatalError = { e ->
-            main.post {
-                fail(getString(R.string.error_recording_failed, e.message ?: e.javaClass.simpleName))
-                stopCapture()
-            }
-        }
-        try {
+        rec.onFatalError = { e -> main.post { onRecorderFailed(rec, e) } }
+        return try {
             rec.start(out.pfd.fileDescriptor, audioPermitted)
+            Prepared.Started(rec, out, sessionMissing = s.editReady && session == null)
         } catch (e: Exception) {
             Log.e(TAG, "start failed", e)
             runCatching { rec.stop() }
             rec.finishSession(false)
-            out.discard(contentResolver)
-            fail(getString(R.string.error_recording_failed, e.message ?: e.javaClass.simpleName))
-            stopCapture()
-            return
-        }
-        recorder = rec
-        output = out
-        RecorderState.setStatus(CaptureStatus.Recording(startedAtMs = SystemClock.elapsedRealtime()))
-        if (s.audioSource != AudioSource.NONE && rec.effectiveAudio != s.audioSource) {
-            toast(getString(R.string.toast_audio_degraded))
+            out.discard(resolver)
+            Prepared.Failed(getString(R.string.error_recording_failed, e.message ?: e.javaClass.simpleName))
         }
     }
 
-    private fun captureSpec(): CaptureSpec {
-        val s = settings.current
+    private fun onPrepared(generation: Int, prepared: Prepared) {
+        val current = generation == startGeneration && !destroyed
+        if (current) preparing = false
+        when (prepared) {
+            is Prepared.Failed -> if (current) {
+                fail(prepared.message)
+                stopCapture()
+            }
+            is Prepared.Started -> {
+                val rec = prepared.recorder
+                if (!current || projection == null) {
+                    // Cancelled (or the projection ended) while it was being set up.
+                    val resolver = applicationContext.contentResolver
+                    RecorderApp.instance.appScope.launch(Dispatchers.IO) {
+                        rec.stop()
+                        rec.finishSession(false)
+                        prepared.output.discard(resolver)
+                    }
+                    return
+                }
+                recorder = rec
+                output = prepared.output
+                preRollHidden = false
+                RecorderState.setStatus(CaptureStatus.Recording(startedAtMs = SystemClock.elapsedRealtime()))
+                if (prepared.sessionMissing) toast(getString(R.string.pro_capture_session_unavailable))
+                val wanted = settings.current.audioSource
+                if (wanted != AudioSource.NONE && rec.effectiveAudio != wanted) {
+                    toast(getString(R.string.toast_audio_degraded))
+                }
+                watchStorage(rec)
+                // A worker that failed before the recorder was installed here.
+                if (rec.hasFailed) onRecorderFailed(rec, IllegalStateException("capture failed while starting"))
+            }
+        }
+    }
+
+    private fun onRecorderFailed(rec: ScreenRecorder, e: Throwable) {
+        if (recorder !== rec) return
+        fail(getString(R.string.error_recording_failed, e.message ?: e.javaClass.simpleName))
+        stopCapture()
+    }
+
+    /**
+     * A full disk mid-recording leaves the muxer unable to finish the file,
+     * and the whole recording is lost. Stopping while there is still room
+     * keeps it.
+     */
+    private fun watchStorage(rec: ScreenRecorder) {
+        storageJob?.cancel()
+        storageJob = scope.launch {
+            while (isActive) {
+                delay(StorageGuard.CHECK_MS)
+                val free = withContext(Dispatchers.IO) { allocatableBytes() }
+                if (recorder === rec && StorageGuard.isLow(free)) {
+                    Log.w(TAG, "storage almost full ($free bytes); stopping")
+                    stopCapture(reason = getString(R.string.error_storage_low))
+                    return@launch
+                }
+            }
+        }
+    }
+
+    /** Bytes that can still be written to shared storage, or null if it cannot be told. */
+    private fun allocatableBytes(): Long? = runCatching {
+        val storage = getSystemService(StorageManager::class.java)
+        storage.getAllocatableBytes(storage.getUuidForPath(getExternalFilesDir(null) ?: filesDir))
+    }.onFailure { Log.w(TAG, "free space unknown", it) }.getOrNull()
+
+    private fun captureSpec(s: RecorderSettings): CaptureSpec {
         val display = getSystemService(DisplayManager::class.java).getDisplay(Display.DEFAULT_DISPLAY)
         val mode = display.mode
         val (w, h) = CapturePlanner.orientedSize(mode.physicalWidth, mode.physicalHeight, display.rotation)
@@ -267,15 +370,26 @@ class RecorderService : Service() {
         RecorderState.setStatus(st.resumed(SystemClock.elapsedRealtime()))
     }
 
-    private fun stopCapture() {
-        if (stopping) return
+    /** [reason], when given, is why the recording was stopped for the user (shown once it is saved). */
+    private fun stopCapture(reason: String? = null) {
+        if (stopping || destroyed) return
         countdownJob?.cancel()
         countdownJob = null
+        storageJob?.cancel()
+        storageJob = null
         val rec = recorder
         if (rec == null) {
-            // Nothing recorded yet (cancelled countdown, or a failed start).
-            releaseProjection()
+            // Nothing recorded yet (cancelled countdown, a failed start, or
+            // one still being set up — onPrepared tears that down).
+            startGeneration++
+            preparing = false
+            preRollHidden = false
+            projection?.let { releaseProjection(it) }
+            projection = null
             RecorderState.setStatus(CaptureStatus.Idle)
+            // Setting Idle when it already was emits nothing: show the button
+            // here, or a start that failed during the pre-roll leaves it hidden.
+            applyButtonVisibility()
             refreshForeground()
             return
         }
@@ -283,39 +397,64 @@ class RecorderService : Service() {
         recorder = null
         val out = output
         output = null
+        val proj = projection
+        projection = null
         RecorderState.setStatus(CaptureStatus.Saving)
-        scope.launch {
+        finishRecording(rec, out, proj, reason)
+    }
+
+    private sealed interface Finished {
+        class Saved(val recording: SavedRecording) : Finished
+        data object PublishFailed : Finished
+        data object NothingRecorded : Finished
+    }
+
+    /**
+     * Stops, publishes (or discards) and lets the projection go, off the main
+     * thread and in the app's scope, so a save started here completes even if
+     * the service is destroyed meanwhile.
+     */
+    private fun finishRecording(rec: ScreenRecorder, out: MediaStoreFile?, proj: MediaProjection?, reason: String?) {
+        val app = applicationContext
+        val resolver = app.contentResolver
+        RecorderApp.instance.appScope.launch {
             // Joins the encoder threads; seconds at worst, never on main.
-            val saved = withContext(Dispatchers.IO) {
+            val finished = withContext(Dispatchers.IO) {
                 val ok = rec.stop()
                 val result = when {
-                    out == null -> null
-                    ok -> out.publish(contentResolver)?.copy(audioKbps = rec.audioBitrate / 1000)
-                    else -> { out.discard(contentResolver); null }
+                    out == null -> Finished.NothingRecorded
+                    !ok -> { out.discard(resolver); Finished.NothingRecorded }
+                    else -> out.publish(resolver)?.let { Finished.Saved(it.copy(audioKbps = rec.audioBitrate / 1000)) }
+                        // Never leave the file pending (invisible, and deleted by the system a week later).
+                        ?: run { out.discard(resolver); Finished.PublishFailed }
                 }
-                rec.finishSession(result != null)
+                rec.finishSession(result is Finished.Saved)
+                proj?.let { releaseProjection(it) }
                 result
             }
-            releaseProjection()
             stopping = false
+            preRollHidden = false
             RecorderState.setStatus(CaptureStatus.Idle)
-            if (saved != null) {
-                RecorderState.setLastSaved(saved)
-                postSavedNotification(saved)
-                toast(getString(R.string.toast_saved, saved.relativePath + saved.displayName))
-            } else {
-                fail(getString(R.string.error_nothing_recorded))
+            when (finished) {
+                is Finished.Saved -> {
+                    val saved = finished.recording
+                    RecorderState.setLastSaved(saved)
+                    postSavedNotification(app, saved)
+                    if (reason != null) fail(reason) else toast(getString(R.string.toast_saved, saved.relativePath + saved.displayName))
+                }
+                Finished.PublishFailed -> fail(getString(R.string.error_publish_failed))
+                Finished.NothingRecorded -> fail(getString(R.string.error_nothing_recorded))
             }
-            refreshForeground()
+            if (!destroyed) {
+                applyButtonVisibility()
+                refreshForeground()
+            }
         }
     }
 
-    private fun releaseProjection() {
-        projection?.let { p ->
-            projection = null
-            runCatching { p.unregisterCallback(projectionCallback) }
-            runCatching { p.stop() }
-        }
+    private fun releaseProjection(p: MediaProjection) {
+        runCatching { p.unregisterCallback(projectionCallback) }
+        runCatching { p.stop() }
     }
 
     private fun fail(message: String) {
@@ -331,9 +470,24 @@ class RecorderService : Service() {
             return
         }
         if (button == null) {
-            button = FloatingButton(this, buttonActions).also { it.show() }
+            // Hidden first, then shown: switched on mid-recording, it must
+            // not appear in the video even for a frame.
+            button = FloatingButton(this, buttonActions).also {
+                it.setHidden(hideWanted())
+                it.show()
+            }
         }
+        applyButtonVisibility()
         RecorderState.setButtonShown(true)
+    }
+
+    private fun hideWanted(
+        status: CaptureStatus = RecorderState.status.value,
+        s: RecorderSettings = settings.current,
+    ): Boolean = ButtonVisibility.hidden(s.hideButtonWhileRecording, preRollHidden, status)
+
+    private fun applyButtonVisibility() {
+        button?.setHidden(hideWanted())
     }
 
     private fun hideButton() {
@@ -456,11 +610,11 @@ class RecorderService : Service() {
         return b.build()
     }
 
-    private fun postSavedNotification(saved: SavedRecording) {
+    private fun postSavedNotification(context: Context, saved: SavedRecording) {
         val uri = saved.uri.toUri()
         val edit = PendingIntent.getActivity(
-            this, 1,
-            MainActivity.editIntent(this, uri),
+            context, 1,
+            MainActivity.editIntent(context, uri),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val send = Intent(Intent.ACTION_SEND)
@@ -469,11 +623,11 @@ class RecorderService : Service() {
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         send.clipData = ClipData.newRawUri(saved.displayName, uri)
         val share = PendingIntent.getActivity(
-            this, 2,
-            Intent.createChooser(send, getString(R.string.action_share)),
+            context, 2,
+            Intent.createChooser(send, context.getString(R.string.action_share)),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        val n = NotificationCompat.Builder(this, RecorderApp.CHANNEL_SAVED)
+        val n = NotificationCompat.Builder(context, RecorderApp.CHANNEL_SAVED)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(getString(R.string.notif_saved_title))
             .setContentText(
@@ -485,10 +639,10 @@ class RecorderService : Service() {
             .addAction(0, getString(R.string.action_edit), edit)
             .addAction(0, getString(R.string.action_share), share)
             .build()
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED ||
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED ||
             Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
         ) {
-            getSystemService(NotificationManager::class.java).notify(NOTIF_SAVED_ID, n)
+            context.getSystemService(NotificationManager::class.java).notify(NOTIF_SAVED_ID, n)
         }
     }
 

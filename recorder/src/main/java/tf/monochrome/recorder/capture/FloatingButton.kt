@@ -67,7 +67,11 @@ class FloatingButton(context: Context, private val actions: Actions) {
     private val side = mutableStateOf(if (prefs.getBoolean(K_RIGHT, true)) Side.RIGHT else Side.LEFT)
     private var root: DragFrame? = null
     private var owner: OverlayOwner? = null
-    private var hidden = false
+    // Compose state as well as the window flag: the content stops animating while hidden.
+    private val hiddenState = mutableStateOf(false)
+    private var hiddenNow: Boolean
+        get() = hiddenState.value
+        set(value) { hiddenState.value = value }
 
     private val params = WindowManager.LayoutParams(
         WindowManager.LayoutParams.WRAP_CONTENT,
@@ -91,6 +95,7 @@ class FloatingButton(context: Context, private val actions: Actions) {
             setContent {
                 FloatingButtonContent(
                     side = side.value,
+                    hidden = hiddenState.value,
                     actions = actions,
                 )
             }
@@ -115,8 +120,8 @@ class FloatingButton(context: Context, private val actions: Actions) {
 
     /** Off screen while recording, when the user asked for a clean capture. */
     fun setHidden(hide: Boolean) {
-        if (hidden == hide) return
-        hidden = hide
+        if (hiddenNow == hide) return
+        hiddenNow = hide
         applyHidden()
     }
 
@@ -127,8 +132,8 @@ class FloatingButton(context: Context, private val actions: Actions) {
 
     private fun applyHidden() {
         val r = root ?: return
-        r.visibility = if (hidden) View.GONE else View.VISIBLE
-        params.flags = if (hidden) {
+        r.visibility = if (hiddenNow) View.GONE else View.VISIBLE
+        params.flags = if (hiddenNow) {
             params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
         } else {
             params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()

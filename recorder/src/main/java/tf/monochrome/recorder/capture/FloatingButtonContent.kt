@@ -2,18 +2,12 @@ package tf.monochrome.recorder.capture
 
 import android.os.SystemClock
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -34,6 +28,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -42,7 +37,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -56,14 +53,25 @@ private val RecordRed = Color(0xFFE5383B)
 private val PauseAmber = Color(0xFFFFB703)
 private val Glass = Color(0xE6101010)
 
+/** One breath of the recording ring, and how often it is redrawn. */
+private const val PULSE_MS = 1_800L
+private const val PULSE_STEP_MS = 100L
+
 /**
  * What the floating button shows. Idle: a record dot — tap records, long
  * press offers "open app" and "hide". Countdown: the seconds left. Recording:
  * the elapsed time — tap opens pause/resume and stop beside it.
+ *
+ * The button is part of every recording it is shown in, so it changes the
+ * screen as little as possible: the screen only sends the encoder a frame
+ * when something on it changes, and a button redrawn every vsync would turn a
+ * still screen into a full-rate one. The ring pulses only while recording,
+ * ten times a second, and only its drawing is repeated (the value is read in
+ * the draw phase, not in composition); while [hidden], nothing runs at all.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-internal fun FloatingButtonContent(side: FloatingButton.Side, actions: FloatingButton.Actions) {
+internal fun FloatingButtonContent(side: FloatingButton.Side, hidden: Boolean, actions: FloatingButton.Actions) {
     val status by RecorderState.status.collectAsStateWithLifecycle()
     var expanded by remember { mutableStateOf(false) }
     // Collapse whenever the phase changes, so a menu opened while idle does
@@ -112,6 +120,7 @@ internal fun FloatingButtonContent(side: FloatingButton.Side, actions: FloatingB
         if (side == FloatingButton.Side.RIGHT) controls()
         Bubble(
             status = status,
+            hidden = hidden,
             onTap = {
                 when (status) {
                     CaptureStatus.Idle -> if (expanded) expanded = false else actions.record()
@@ -128,14 +137,22 @@ internal fun FloatingButtonContent(side: FloatingButton.Side, actions: FloatingB
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun Bubble(status: CaptureStatus, onTap: () -> Unit, onLongPress: () -> Unit) {
-    val pulse = rememberInfiniteTransition(label = "pulse")
-    val ringAlpha by pulse.animateFloat(
-        initialValue = 1f,
-        targetValue = 0.35f,
-        animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
-        label = "ring",
-    )
+private fun Bubble(status: CaptureStatus, hidden: Boolean, onTap: () -> Unit, onLongPress: () -> Unit) {
+    val pulsing = status is CaptureStatus.Recording && !status.isPaused && !hidden
+    // Written by the loop below, read only inside drawWithContent: a step
+    // redraws the ring without recomposing anything.
+    val ringAlpha = remember { mutableFloatStateOf(1f) }
+    LaunchedEffect(pulsing) {
+        ringAlpha.floatValue = 1f
+        if (!pulsing) return@LaunchedEffect
+        val start = SystemClock.elapsedRealtime()
+        while (true) {
+            delay(PULSE_STEP_MS)
+            val phase = ((SystemClock.elapsedRealtime() - start) % PULSE_MS).toFloat() / PULSE_MS
+            val down = if (phase < 0.5f) phase * 2 else (1 - phase) * 2
+            ringAlpha.floatValue = 1f - 0.65f * down
+        }
+    }
     val ringColor = when (status) {
         is CaptureStatus.Recording -> if (status.isPaused) PauseAmber else RecordRed
         else -> Color.White.copy(alpha = 0.6f)
@@ -153,11 +170,15 @@ private fun Bubble(status: CaptureStatus, onTap: () -> Unit, onLongPress: () -> 
             .size(58.dp)
             .clip(CircleShape)
             .background(Glass)
-            .border(
-                width = 2.dp,
-                color = ringColor.copy(alpha = if (status is CaptureStatus.Recording && !status.isPaused) ringAlpha else 1f),
-                shape = CircleShape,
-            )
+            .drawWithContent {
+                drawContent()
+                val stroke = 2.dp.toPx()
+                drawCircle(
+                    color = ringColor.copy(alpha = if (pulsing) ringAlpha.floatValue else 1f),
+                    radius = size.minDimension / 2 - stroke / 2,
+                    style = Stroke(stroke),
+                )
+            }
             .combinedClickable(onClickLabel = description, onClick = onTap, onLongClick = onLongPress),
         contentAlignment = Alignment.Center,
     ) {
@@ -176,10 +197,13 @@ private fun Bubble(status: CaptureStatus, onTap: () -> Unit, onLongPress: () -> 
             )
             is CaptureStatus.Recording -> {
                 var now by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
-                LaunchedEffect(status) {
+                // Ticks once a second, on the second; not at all while paused or hidden.
+                LaunchedEffect(status, hidden) {
+                    now = SystemClock.elapsedRealtime()
+                    if (hidden || status.isPaused) return@LaunchedEffect
                     while (true) {
+                        delay(1_000 - status.elapsedMs(SystemClock.elapsedRealtime()) % 1_000)
                         now = SystemClock.elapsedRealtime()
-                        delay(250)
                     }
                 }
                 Text(
@@ -187,7 +211,7 @@ private fun Bubble(status: CaptureStatus, onTap: () -> Unit, onLongPress: () -> 
                     color = Color.White,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.alpha(if (status.isPaused) ringAlpha else 1f),
+                    modifier = Modifier.alpha(if (status.isPaused) 0.6f else 1f),
                 )
             }
             CaptureStatus.Saving -> CircularProgressIndicator(

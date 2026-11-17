@@ -64,6 +64,28 @@ object RecorderState {
     internal fun setLastSaved(saved: SavedRecording) { _lastSaved.value = saved }
 }
 
+/** Whether the floating button is taken off screen. Pure, so the rule is JVM-tested. */
+object ButtonVisibility {
+    /**
+     * [startingCapture] covers the moment between the countdown and the first
+     * frame, when the status may still be Idle (no countdown) or Countdown.
+     * Any other state shows the button again — including a start that failed
+     * or was cancelled in that moment.
+     */
+    fun hidden(hideWhileRecording: Boolean, startingCapture: Boolean, status: CaptureStatus): Boolean =
+        hideWhileRecording && (startingCapture || status is CaptureStatus.Recording || status is CaptureStatus.Saving)
+}
+
+/** Free space below which a recording is not started, and one in progress is stopped and saved. */
+object StorageGuard {
+    const val MARGIN_BYTES = 200L * 1024 * 1024
+
+    /** How often a recording checks, in milliseconds. */
+    const val CHECK_MS = 4_000L
+
+    fun isLow(allocatableBytes: Long?): Boolean = allocatableBytes != null && allocatableBytes < MARGIN_BYTES
+}
+
 /** m:ss, or h:mm:ss past the hour. */
 fun formatDuration(ms: Long): String {
     val totalSec = (ms / 1000).coerceAtLeast(0)

@@ -32,6 +32,9 @@
     <string name="error_no_storage">Could not create the video file</string>
     <string name="error_recording_failed">Recording failed: %1$s</string>
     <string name="error_nothing_recorded">Nothing was recorded</string>
+    <string name="error_publish_failed">The recording could not be saved</string>
+    <string name="error_storage_low">Storage almost full: recording stopped and saved</string>
+    <string name="error_storage_low_start">Not enough free storage to record</string>
     <!-- Navigation -->
     <string name="tab_record">Record</string>
     <string name="tab_library">Library</string>
