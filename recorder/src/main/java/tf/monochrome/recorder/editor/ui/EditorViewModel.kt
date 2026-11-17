@@ -407,13 +407,23 @@ class EditorViewModel(app: Application, private val projectId: String) : Android
     suspend fun trackingFrame(clip: VideoClip, sourceUs: Long): Bitmap? =
         TrackAnalysis.sourceFrame(getApplication(), clip.source, sourceUs)
 
+    private val _trackProgress = MutableStateFlow<Float?>(null)
+
+    /** How far cover tracking is, 0..1, or null when none is running. */
+    val trackProgress: StateFlow<Float?> = _trackProgress.asStateFlow()
+
     fun trackCover(clip: VideoClip, sourceUs: Long, box: CropRect) {
         trackingJob?.cancel()
         val context = getApplication<Application>()
         message.value = context.getString(R.string.pro_track_running)
-        trackingJob = viewModelScope.launch {
+        _trackProgress.value = 0f
+        val job = viewModelScope.launch {
             try {
-                val track = TrackAnalysis.analyze(context, clip.source, clip.trimStartUs, clip.trimEndUs, sourceUs, box)
+                val track = TrackAnalysis.analyze(context, clip.source, clip.trimStartUs, clip.trimEndUs, sourceUs, box) {
+                    // Whole percents only: the flow is not woken for every frame.
+                    val step = (it * 100).toInt() / 100f
+                    if (_trackProgress.value != step) _trackProgress.value = step
+                }
                 val latest = project?.clips?.firstOrNull { it.id == clip.id && it.source == clip.source && it.angleId == null }
                 if (latest != null) {
                     edit { p -> p.updateClipPicture(clip.id) { it.copy(trackedCover = track) } }
@@ -427,6 +437,8 @@ class EditorViewModel(app: Application, private val projectId: String) : Android
                 message.value = context.getString(R.string.pro_track_failed)
             }
         }
+        trackingJob = job
+        job.invokeOnCompletion { if (trackingJob === job) _trackProgress.value = null }
     }
 
     fun correctCover(id: String, sourceUs: Long, box: CropRect) = edit { p ->

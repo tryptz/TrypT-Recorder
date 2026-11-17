@@ -7,16 +7,30 @@ import kotlin.math.roundToInt
 @Serializable
 data class CoverSample(val sourceUs: Long, val box: CropRect, val matched: Boolean = true)
 
+/**
+ * A cover box that follows something through a clip. Only the samples the
+ * tracker was sure of (and the user's corrections) say where it is: between
+ * two of those the box moves from one to the other, before the first and
+ * after the last it stays where it was seen, and a sample the tracker lost
+ * is passed over. Only with no sure sample at all does it cover the whole
+ * frame — blacking out the picture wherever one match failed hid far more
+ * than the thing being covered.
+ */
 @Serializable
 data class TrackedCover(val samples: List<CoverSample>) {
+    // Not serialised: a delegated property has no backing field for the serializer to see.
+    private val confident: List<CoverSample> by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        samples.filter { it.matched }.sortedBy { it.sourceUs }
+    }
+
     fun at(sourceUs: Long): CropRect {
-        if (samples.isEmpty()) return CropRect.FULL
-        val i = samples.binarySearchBy(sourceUs) { it.sourceUs }
-        if (i >= 0) return samples[i].let { if (it.matched) it.box else CropRect.FULL }
+        val known = confident
+        if (known.isEmpty()) return CropRect.FULL
+        val i = known.binarySearchBy(sourceUs) { it.sourceUs }
+        if (i >= 0) return known[i].box
         val next = -i - 1
-        val before = samples.getOrNull(next - 1) ?: return CropRect.FULL
-        val after = samples.getOrNull(next) ?: return CropRect.FULL
-        if (!before.matched || !after.matched) return CropRect.FULL
+        val before = known.getOrNull(next - 1) ?: return known.first().box
+        val after = known.getOrNull(next) ?: return known.last().box
         val t = (sourceUs - before.sourceUs).toDouble() / (after.sourceUs - before.sourceUs)
         fun mix(a: Float, b: Float) = (a + (b - a) * t).toFloat()
         return CropRect(
@@ -30,8 +44,11 @@ data class TrackedCover(val samples: List<CoverSample>) {
             .sortedBy { it.sourceUs })
 }
 
-/** Luma template matching in source pixels. Search in coarse steps, then refine the best candidate. */
-class CoverTracker(seed: IntArray, private val width: Int, private val height: Int, box: CropRect) {
+/**
+ * Luma template matching in source pixels. Search in coarse steps, then refine the best candidate.
+ * Frames are full-range luma, one unsigned byte a pixel, row by row ([lumaOf]).
+ */
+class CoverTracker(seed: ByteArray, private val width: Int, private val height: Int, box: CropRect) {
     private val patchW = (box.width * width).roundToInt().coerceIn(2, width)
     private val patchH = (box.height * height).roundToInt().coerceIn(2, height)
     private val originX = (box.left * width).roundToInt().coerceIn(0, width - patchW)
@@ -39,10 +56,10 @@ class CoverTracker(seed: IntArray, private val width: Int, private val height: I
     private val offsets = IntArray(GRID * GRID) { i ->
         (i % GRID) * (patchW - 1) / (GRID - 1) + (i / GRID) * (patchH - 1) / (GRID - 1) * width
     }
-    private val template = IntArray(offsets.size) { luma(seed[originY * width + originX + offsets[it]]) }
+    private val template = IntArray(offsets.size) { seed[originY * width + originX + offsets[it]].toInt() and 255 }
     private val usable = template.max() - template.min() >= 22
 
-    fun find(pixels: IntArray, around: CropRect): CropRect? {
+    fun find(pixels: ByteArray, around: CropRect): CropRect? {
         if (!usable) return null
         val x = (around.left * width).roundToInt()
         val y = (around.top * height).roundToInt()
@@ -76,16 +93,23 @@ class CoverTracker(seed: IntArray, private val width: Int, private val height: I
         )
     }
 
-    private fun score(pixels: IntArray, x: Int, y: Int): Int {
+    private fun score(pixels: ByteArray, x: Int, y: Int): Int {
         val start = y * width + x
         var cost = 0
-        for (i in offsets.indices) cost += abs(luma(pixels[start + offsets[i]]) - template[i])
+        for (i in offsets.indices) cost += abs((pixels[start + offsets[i]].toInt() and 255) - template[i])
         return cost
     }
 
-    private companion object {
-        const val GRID = 12
-        fun luma(argb: Int): Int =
+    companion object {
+        private const val GRID = 12
+
+        /** The luma the tracker matches on, from an ARGB pixel. */
+        fun lumaOf(argb: Int): Int =
             ((argb ushr 16 and 255) * 54 + (argb ushr 8 and 255) * 183 + (argb and 255) * 19) ushr 8
+
+        /** [argb] pixels as the tracker's luma bytes, into [out]. */
+        fun lumaOf(argb: IntArray, out: ByteArray) {
+            for (i in argb.indices) out[i] = lumaOf(argb[i]).toByte()
+        }
     }
 }

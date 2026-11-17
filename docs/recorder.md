@@ -247,6 +247,22 @@ Android/Media3 layers only carry them out.
   recomposition); the timer ticks on the second; hidden, nothing runs.
 - **Volume above 100 %** uses `VolumeEnvelope`, not Media3's `GainProcessor`,
   which is specified for [0, 1] and wraps 16-bit samples above that.
+- **A tracked cover holds the boxes it is sure of.** Between two samples
+  the tracker matched (or the user corrected) the box moves from one to the
+  other; before the first and after the last it stays put; a sample it lost
+  is passed over. Only a track with no sure sample covers the whole frame —
+  it used to black out the picture wherever a single match failed.
+- **Tracking decodes the clip once, front to back** (`TrackAnalysis`):
+  MediaCodec, not MediaMetadataRetriever, which decoded each of up to 600
+  samples from the keyframe before it into a new bitmap. Each decoded frame
+  is held until the next arrives, since the frame on screen at a time is the
+  latest at or before it (`FramePicker`), and only the frames a sample needs
+  are shrunk — upright, cropped, four taps a pixel, video levels widened to
+  full range (`LumaGrid`) — into one reused buffer. The times before the
+  seed are read in chunks of 48 and matched backwards, so a chunk is all
+  that is held (`CoverTracking`). Progress is published as
+  `EditorViewModel.trackProgress`. If no decoder can be had, the retriever
+  is used as before.
 - **A speed ramp is sixteen steady steps** between two keys (`ClipTiming`),
   so the audio sees a bounded number of speed changes. The first step plays
   at the first key's rate and the last at the second key's: a key on the

@@ -176,15 +176,23 @@ class ProEditorTest {
         assertEquals(33_366, TimelineRate.FPS_2997.step(66_733, false))
     }
 
-    @Test fun trackFailsClosedAcrossAnUncertainSample() {
+    @Test fun trackHoldsTheSureBoxesAcrossAnUncertainSample() {
         val box = CropRect(.2f, .2f, .4f, .4f)
         val later = CropRect(.4f, .2f, .6f, .4f)
         val track = TrackedCover(listOf(CoverSample(0, box), CoverSample(SEC, box, false), CoverSample(2 * SEC, later)))
-        assertEquals(CropRect.FULL, track.at(SEC / 2))
-        assertEquals(CropRect.FULL, track.at(3 * SEC))
+        // A lost sample is passed over: the box moves from one sure sample to the next.
+        assertEquals(.25f, track.at(SEC / 2).left, .0001f)
+        assertEquals(.3f, track.at(SEC).left, .0001f)
+        // Before the first and after the last sure sample it stays where it was seen.
+        assertEquals(later, track.at(3 * SEC))
+        assertEquals(box, track.at(-SEC))
         assertEquals(.3f, track.correct(SEC, later).at(SEC / 2).left, .0001f)
+        // Only with nothing sure at all does it cover the whole frame.
+        assertEquals(CropRect.FULL, TrackedCover(listOf(CoverSample(0, box, false), CoverSample(SEC, later, false))).at(SEC / 2))
+        assertEquals(CropRect.FULL, TrackedCover(emptyList()).at(0))
+        assertEquals(later, TrackedCover(listOf(CoverSample(0, box, false), CoverSample(SEC, later))).at(0))
 
-        val pixels = IntArray(40 * 40) { 0xff777777.toInt() }
+        val pixels = ByteArray(40 * 40) { 0x77 }
         assertNull(CoverTracker(pixels, 40, 40, box).find(pixels, box))
         assertNotNull(track.at(0))
     }
