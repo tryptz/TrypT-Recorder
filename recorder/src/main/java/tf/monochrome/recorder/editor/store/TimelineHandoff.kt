@@ -27,8 +27,12 @@ object TimelineHandoff {
     """.trimIndent()
 
     fun create(project: Project): String {
-        val plan = (ExportPlanner.plan(project, ExportSettings()) as PlanResult.Ok).plan
         val fps = project.frameRate.numerator.toDouble() / project.frameRate.denominator
+        // A project with no clips has no cut to hand over: an empty video track.
+        val plan = when (val result = ExportPlanner.plan(project, ExportSettings())) {
+            is PlanResult.Ok -> result.plan
+            is PlanResult.Nothing -> return timeline(project, fps, listOf(track("V1", "Video", emptyList())))
+        }
         val refs = buildList {
             project.clips.forEach { clip -> add(clip.source); clip.angles.forEach { add(it.source) } }
             addAll(project.audio.map { it.source })
@@ -51,7 +55,11 @@ object TimelineHandoff {
                 add(track("A${index + 2}", "Audio", sequence(lane, refs, fps)))
             }
         }
-        return buildJsonObject {
+        return timeline(project, fps, tracks)
+    }
+
+    private fun timeline(project: Project, fps: Double, tracks: List<JsonObject>): String =
+        buildJsonObject {
             put("OTIO_SCHEMA", "Timeline.1")
             put("name", project.name)
             put("metadata", emptyMetadata)
@@ -61,7 +69,6 @@ object TimelineHandoff {
                 put("children", JsonArray(tracks))
             })
         }.toString()
-    }
 
     private fun sequence(
         segments: List<Segment>, refs: Map<String, MediaRef>, fps: Double, audio: Boolean = false,

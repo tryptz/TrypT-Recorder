@@ -2,6 +2,8 @@ package tf.monochrome.recorder.editor.store
 
 import android.content.Context
 import android.net.Uri
+import android.provider.DocumentsContract
+import android.util.Log
 import androidx.core.net.toUri
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -28,10 +30,38 @@ import kotlin.coroutines.coroutineContext
 private data class ProjectBundleManifest(val version: Int = 1, val hashes: Map<String, String>)
 
 object ProjectBundle {
+    private const val TAG = "ProjectBundle"
     private const val MAX_JSON = 32 * 1024 * 1024
-    private val mediaPath = Regex("""media/[0-9]{6}\.[a-z0-9]{1,8}""")
+    private val mediaPath = BundleValidation.mediaPath
 
+    /**
+     * Writes [project] and its media to [destination], a document the user
+     * created. If it fails or is cancelled part-way, the document is deleted
+     * (or, where its provider cannot delete, emptied) rather than left as a
+     * truncated zip that looks like a bundle.
+     *
+     * Copying the media can take minutes: run it in a scope that outlives the
+     * screen (RecorderApp.appScope), not the screen's own, or leaving the
+     * screen cancels it.
+     */
     suspend fun export(context: Context, project: Project, destination: Uri) = withContext(Dispatchers.IO) {
+        try {
+            write(context, project, destination)
+        } catch (e: Throwable) {
+            withContext(NonCancellable) { abandon(context, destination) }
+            throw e
+        }
+    }
+
+    private fun abandon(context: Context, destination: Uri) {
+        val resolver = context.contentResolver
+        val deleted = runCatching { DocumentsContract.deleteDocument(resolver, destination) }
+            .onFailure { Log.w(TAG, "cannot delete the unfinished bundle; emptying it", it) }
+            .getOrDefault(false)
+        if (!deleted) runCatching { resolver.openOutputStream(destination, "wt")?.close() }
+    }
+
+    private suspend fun write(context: Context, project: Project, destination: Uri) {
         val resolver = context.contentResolver
         val refs = linkedMapOf<String, String>()
         val portable = project.mapMedia { media ->
@@ -85,7 +115,13 @@ object ProjectBundle {
                     coroutineContext.ensureActive()
                     val entry = zip.nextEntry ?: break
                     val name = entry.name
-                    require(!entry.isDirectory && names.add(name))
+                    require(names.add(name))
+                    // Archivers add the folder itself; it carries nothing. Any other folder is refused.
+                    if (entry.isDirectory) {
+                        require(name == BundleValidation.MEDIA_DIRECTORY)
+                        zip.closeEntry()
+                        continue
+                    }
                     when (name) {
                         "project.json" -> portable = ProjectStore.JSON.decodeFromString(Project.serializer(), zip.readTextBounded())
                         "manifest.json" -> manifest = ProjectStore.JSON.decodeFromString(
@@ -110,6 +146,7 @@ object ProjectBundle {
                 ref.copy(uri = File(root, ref.uri.substringAfter('/')).toUri().toString())
             }
             require(used == hashes.keys && restored.clips.isNotEmpty())
+            BundleValidation.requireValid(restored)
             restored.clips.forEach { require(it.trimStartUs in 0 until it.trimEndUs && it.trimEndUs <= it.source.durationUs) }
             restored.overlays.forEach { require(it.trimStartUs in 0 until it.trimEndUs && it.trimEndUs <= it.source.durationUs) }
             restored.audio.forEach { require(it.trimStartUs in 0 until it.trimEndUs && it.trimEndUs <= it.source.durationUs) }
