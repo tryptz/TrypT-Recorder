@@ -343,6 +343,16 @@ Android/Media3 layers only carry them out.
   each source frame (handing the upstream's texture straight back), draws as
   many output frames as it has free textures for, and asks for the next
   source frame only when the current pair is finished.
+  If the seven OpenGL ES 3 flow programs will not compile on a phone, the
+  export repeats frames instead of failing, and the ones that did compile
+  are deleted. Compiled programs (and the flow's textures) are handed from
+  one clip's effect to the next within a video frame processor, since Media3
+  releases one before it makes the next on the same context; they used to
+  be compiled again at every cut. After a seek (`flush`) the grid starts
+  again from the first frame that arrives (`FrameRetimer.flush`). An exact
+  frame is still copied in and out rather than handed on: an output stays
+  the downstream's until released and a held frame goes out many times, so
+  handing out the slot it lives in would stall the next source frame.
   It sits after a clip's own picture is graded and before grain, fades and
   titles, which are then drawn fresh on every frame instead of being pushed
   about with the motion; with picture-in-picture layers it runs once on the

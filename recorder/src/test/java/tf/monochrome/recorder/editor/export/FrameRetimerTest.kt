@@ -166,6 +166,34 @@ class FrameRetimerTest {
     }
 
     @Test
+    fun `after a flush the grid starts again from the first frame offered`() {
+        // Seek back: the frames come again from 100 ms, and so does the output.
+        val back = retimer(60, endUs = 1_000_000)
+        for (t in source(30, 15)) { back.offer(t); back.drain() }
+        back.flush()
+        back.offer(100_000)
+        back.offer(133_333)
+        assertEquals(listOf(100_000L, 116_666, 133_333), back.drain().map { it.timeUs })
+
+        // Seek forward: nothing is made for the stretch that was skipped.
+        val forward = retimer(60, endUs = 1_000_000)
+        forward.offer(0)
+        forward.offer(33_333)
+        assertEquals(listOf(0L, 16_666, 33_333), forward.drain().map { it.timeUs })
+        forward.flush()
+        forward.offer(700_000)
+        forward.offer(733_333)
+        assertEquals(listOf(700_000L, 716_666, 733_333), forward.drain().map { it.timeUs })
+
+        // Never before the clip's own start, whatever the first frame after a flush.
+        val clip = retimer(60, endUs = 1_000_000, startUs = 200_000)
+        clip.flush()
+        clip.offer(150_000)
+        clip.offer(250_000)
+        assertEquals(200_000L, clip.drain().first().timeUs)
+    }
+
+    @Test
     fun `a long still tail is counted out one frame at a time`() {
         val r = retimer(165, endUs = 600 * 1_000_000L)
         r.offer(0)

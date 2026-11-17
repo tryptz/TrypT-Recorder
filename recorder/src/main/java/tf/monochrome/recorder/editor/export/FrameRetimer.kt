@@ -60,6 +60,7 @@ class FrameRetimer(
     private var earlierUs = NONE
     private var laterUs = NONE
     private var finished = false
+    private var reseed = false
     private var next = indexAtOrAfter(startUs - snapUs)
 
     fun gridUs(index: Long): Long = index * 1_000_000L * denominator / numerator
@@ -77,6 +78,11 @@ class FrameRetimer(
     fun offer(timeUs: Long): Boolean {
         check(!finished) { "offer after finish" }
         if (laterUs != NONE && timeUs <= laterUs) return false
+        if (reseed) {
+            // The first frame after a flush: the grid goes on from it, forwards or back.
+            reseed = false
+            next = maxOf(indexAtOrAfter(startUs - snapUs), indexAtOrAfter(timeUs - snapUs))
+        }
         earlierUs = laterUs
         laterUs = timeUs
         return true
@@ -114,6 +120,19 @@ class FrameRetimer(
         earlierUs = NONE
         laterUs = NONE
         finished = false
+    }
+
+    /**
+     * Forgets the source frames after a seek. Unlike [reset], the grid
+     * position goes too: the frames that come next may be from anywhere in the
+     * clip, earlier or later, and the grid is picked up again from the first
+     * of them. Kept, the old position would make nothing until the frames
+     * caught up with it after a seek back, and leave a gap after a seek forward
+     * that the first new frame was then stretched across.
+     */
+    fun flush() {
+        reset()
+        reseed = true
     }
 
     companion object {

@@ -3,7 +3,10 @@
 package tf.monochrome.recorder.editor.export
 
 import android.content.Context
+import android.opengl.EGL14
+import android.opengl.EGLContext
 import android.opengl.GLES20
+import android.util.Log
 import androidx.annotation.OptIn
 import androidx.media3.common.GlObjectsProvider
 import androidx.media3.common.GlTextureInfo
@@ -13,6 +16,7 @@ import androidx.media3.common.util.GlUtil
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.effect.GlEffect
 import androidx.media3.effect.GlShaderProgram
+import java.util.WeakHashMap
 import java.util.concurrent.Executor
 import kotlin.math.max
 import kotlin.math.min
@@ -36,31 +40,85 @@ class FrameInterpolation(
     private val endUs: Long,
     private val holdGapUs: Long,
 ) : GlEffect {
-    override fun toGlShaderProgram(context: Context, useHdr: Boolean): GlShaderProgram = try {
-        // The flow shaders need OpenGL ES 3; on a 2.0 context frames are repeated instead.
-        val flow = rate.opticalFlow && GlUtil.getContextMajorVersion() >= 3
-        FrameInterpolationShaderProgram(
-            useHdr,
-            FrameRetimer(rate.numerator, rate.denominator, startUs, endUs, holdGapUs, interpolate = flow),
-            flow,
-        )
-    } catch (e: GlUtil.GlException) {
-        throw VideoFrameProcessingException(e)
+    override fun toGlShaderProgram(context: Context, useHdr: Boolean): GlShaderProgram =
+        FrameInterpolationShaderProgram(useHdr, rate) { interpolate ->
+            FrameRetimer(rate.numerator, rate.denominator, startUs, endUs, holdGapUs, interpolate)
+        }
+}
+
+/**
+ * The compiled programs one [FrameInterpolationShaderProgram] draws with: the
+ * copy, and the optical flow's (with its textures) when it has them.
+ *
+ * Every clip of an export has its own effect, so without this each cut
+ * compiled eight programs and made some thirty textures again. Media3 releases
+ * one clip's program before it makes the next one's, on the same GL thread
+ * and context, so the kit is handed back here on release and taken up again
+ * by the next clip. It is kept per [GlObjectsProvider] — one per video frame
+ * processor, gone with it — and checked against the context it was made in.
+ * The GL objects of a kit left here die with that context, as everything
+ * else Media3 made in it does.
+ */
+private class ProgramKit(val copy: GlProgram, val flow: OpticalFlow?, val wantedFlow: Boolean) {
+    val context: EGLContext = EGL14.eglGetCurrentContext()
+
+    fun delete() {
+        flow?.release()
+        copy.delete()
+    }
+
+    companion object {
+        private val idle = WeakHashMap<GlObjectsProvider, ProgramKit>()
+
+        /** A kit for the current context: an idle one, or freshly compiled. */
+        fun take(gl: GlObjectsProvider, wantFlow: Boolean): ProgramKit {
+            val kept = synchronized(idle) { idle.remove(gl) }
+            if (kept != null) {
+                if (kept.context == EGL14.eglGetCurrentContext()) {
+                    if (kept.wantedFlow == wantFlow) return kept
+                    kept.delete()
+                }
+                // Made in another context: not ours to delete; it goes with that context.
+            }
+            return compile(wantFlow)
+        }
+
+        /** Keeps [kit] for the next clip; false when one is kept already, and the caller deletes it. */
+        fun give(gl: GlObjectsProvider, kit: ProgramKit): Boolean = synchronized(idle) {
+            if (idle.containsKey(gl)) false else true.also { idle[gl] = kit }
+        }
+
+        /**
+         * The copy, which every context can run, and the flow programs, which
+         * need OpenGL ES 3. If those will not compile here the export goes on
+         * repeating frames rather than failing (see [OpticalFlow.compile]).
+         */
+        private fun compile(wantFlow: Boolean): ProgramKit {
+            val copy = GlProgram(COPY_VERTEX_SHADER, COPY_FRAGMENT_SHADER).also(::fullFrame)
+            val flow = if (wantFlow && GlUtil.getContextMajorVersion() >= 3) OpticalFlow.compile() else null
+            return ProgramKit(copy, flow, wantFlow)
+        }
     }
 }
 
 private class FrameInterpolationShaderProgram(
     private val useHdr: Boolean,
-    private val retimer: FrameRetimer,
-    withFlow: Boolean,
+    private val rate: PlannedFrameRate,
+    private val newRetimer: (interpolate: Boolean) -> FrameRetimer,
 ) : GlShaderProgram {
     private var inputListener: GlShaderProgram.InputListener = object : GlShaderProgram.InputListener {}
     private var outputListener: GlShaderProgram.OutputListener = object : GlShaderProgram.OutputListener {}
     private var errorExecutor: Executor = Executor { it.run() }
     private var errorListener: GlShaderProgram.ErrorListener = GlShaderProgram.ErrorListener { }
 
-    private val copy = GlProgram(COPY_VERTEX_SHADER, COPY_FRAGMENT_SHADER).also(::fullFrame)
-    private val flow: OpticalFlow? = if (withFlow) OpticalFlow(useHdr) else null
+    /** Replaced, before its first frame, by one that repeats frames if the flow programs cannot be had. */
+    private var retimer = newRetimer(rate.opticalFlow)
+
+    /** The programs, taken up with the first frame, when the GL objects provider is known. */
+    private var kit: ProgramKit? = null
+    private var provider: GlObjectsProvider? = null
+    private val copy: GlProgram get() = kit!!.copy
+    private val flow: OpticalFlow? get() = kit?.flow
 
     private var width = 0
     private var height = 0
@@ -100,6 +158,14 @@ private class FrameInterpolationShaderProgram(
             // textures: the tail gives way, since its frames are about to be overwritten.
             if (ending) endStream()
             if (retimer.offer(presentationTimeUs)) {
+                // A source frame is copied in, and an exact output frame copied out
+                // again (render), rather than passed on as it is. Handing out a slot
+                // texture would not be safe under GlShaderProgram's contract: an output
+                // stays the downstream's until releaseOutputFrame, a held frame goes out
+                // many times over, and the slot is overwritten by the next source frame
+                // — which would then have to wait for every one of those to come back,
+                // stalling the pipeline. The upstream's own texture cannot be kept
+                // either: it is handed straight back so the decoder never waits.
                 newest = 1 - newest
                 draw(copy, frames[newest]!!) { copy.setSamplerTexIdUniform("uTexSampler", inputTexture.texId, 0) }
                 flow?.invalidate(newest)
@@ -136,7 +202,8 @@ private class FrameInterpolationShaderProgram(
     override fun flush() {
         free.addAll(inUse)
         inUse.clear()
-        retimer.reset()
+        // After a seek the frames come from somewhere else: the grid starts again at the first of them.
+        retimer.flush()
         ending = false
         owesReady = false
         flowReady = false
@@ -150,8 +217,10 @@ private class FrameInterpolationShaderProgram(
             free.clear()
             inUse.clear()
             frames.fill(null)
-            flow?.release()
-            copy.delete()
+            val k = kit
+            val gl = provider
+            kit = null
+            if (k != null && (gl == null || !ProgramKit.give(gl, k))) k.delete()
         } catch (e: GlUtil.GlException) {
             throw VideoFrameProcessingException(e)
         }
@@ -210,6 +279,14 @@ private class FrameInterpolationShaderProgram(
     }
 
     private fun configure(gl: GlObjectsProvider, w: Int, h: Int) {
+        if (kit == null) {
+            val k = ProgramKit.take(gl, rate.opticalFlow)
+            kit = k
+            provider = gl
+            k.flow?.useHdr = useHdr
+            // No frame has been offered yet, so the retimer can still be swapped.
+            if (rate.opticalFlow && k.flow == null) retimer = newRetimer(false)
+        }
         if (w == width && h == height) return
         // A new size is a new picture: nothing made at the old one can be reused.
         check(inUse.isEmpty()) { "frame size changed with output frames still in use" }
@@ -253,21 +330,26 @@ private class FrameInterpolationShaderProgram(
  * the nearer source frame is shown as it is. If they disagree nearly
  * everywhere, it is a cut, and the whole frame is the nearer one.
  */
-private class OpticalFlow(private val useHdr: Boolean) {
+private class OpticalFlow private constructor(private val programs: List<GlProgram>) {
     private class Level(val w: Int, val h: Int, val luma: GlTextureInfo, val picture: Array<GlTextureInfo>, val motion: Array<GlTextureInfo>) {
         val texel = floatArrayOf(1f / w, 1f / h)
         fun all() = listOf(luma) + picture + motion
     }
 
-    private val lumaProgram = GlProgram(FLOW_VERTEX_SHADER, FLOW_LUMA_SHADER).also(::fullFrame)
-    private val halveProgram = GlProgram(FLOW_VERTEX_SHADER, FLOW_HALVE_SHADER).also(::fullFrame)
-    private val gradientProgram = GlProgram(FLOW_VERTEX_SHADER, FLOW_GRADIENT_SHADER).also(::fullFrame)
-    private val motionProgram = GlProgram(FLOW_VERTEX_SHADER, FLOW_MOTION_SHADER).also(::fullFrame)
-    private val residualProgram = GlProgram(FLOW_VERTEX_SHADER, FLOW_RESIDUAL_SHADER).also(::fullFrame)
-    private val meanProgram = GlProgram(FLOW_VERTEX_SHADER, FLOW_MEAN_SHADER).also(::fullFrame)
-    private val blendProgram = GlProgram(FLOW_VERTEX_SHADER, FLOW_BLEND_SHADER).also(::fullFrame)
+    /** Frames come linear (HDR) rather than gamma-encoded; set by whoever draws with this. */
+    var useHdr = false
+
+    private val lumaProgram = programs[0]
+    private val halveProgram = programs[1]
+    private val gradientProgram = programs[2]
+    private val motionProgram = programs[3]
+    private val residualProgram = programs[4]
+    private val meanProgram = programs[5]
+    private val blendProgram = programs[6]
 
     private var levels = emptyList<Level>()
+    private var configuredWidth = 0
+    private var configuredHeight = 0
     private var residual: GlTextureInfo? = null
     private var mean: GlTextureInfo? = null
     private val pictureValid = booleanArrayOf(false, false)
@@ -276,7 +358,12 @@ private class OpticalFlow(private val useHdr: Boolean) {
     private var motion: GlTextureInfo? = null
 
     fun configure(gl: GlObjectsProvider, width: Int, height: Int) {
+        pictureValid.fill(false)
+        // Taken up again by the next clip at the same size: its textures are kept.
+        if (width == configuredWidth && height == configuredHeight && levels.isNotEmpty()) return
         releaseTextures()
+        configuredWidth = width
+        configuredHeight = height
         val sizes = levelSizes(width, height)
         levels = sizes.map { (w, h) ->
             Level(
@@ -369,6 +456,8 @@ private class OpticalFlow(private val useHdr: Boolean) {
     private fun releaseTextures() {
         (levels.flatMap { it.all() } + listOfNotNull(residual, mean)).forEach { it.release() }
         levels = emptyList()
+        configuredWidth = 0
+        configuredHeight = 0
         residual = null
         mean = null
         motion = null
@@ -376,11 +465,35 @@ private class OpticalFlow(private val useHdr: Boolean) {
 
     fun release() {
         releaseTextures()
-        listOf(lumaProgram, halveProgram, gradientProgram, motionProgram, residualProgram, meanProgram, blendProgram)
-            .forEach { it.delete() }
+        programs.forEach { it.delete() }
     }
 
     companion object {
+        private const val TAG = "FrameInterpolation"
+
+        /**
+         * The seven flow programs, or null if any will not compile or link
+         * here — an OpenGL ES 3 driver can still reject a shader. Those made
+         * before the failure are deleted, and the export repeats frames
+         * instead of failing.
+         */
+        fun compile(): OpticalFlow? {
+            val built = mutableListOf<GlProgram>()
+            return try {
+                for (fragment in listOf(
+                    FLOW_LUMA_SHADER, FLOW_HALVE_SHADER, FLOW_GRADIENT_SHADER, FLOW_MOTION_SHADER,
+                    FLOW_RESIDUAL_SHADER, FLOW_MEAN_SHADER, FLOW_BLEND_SHADER,
+                )) {
+                    built += GlProgram(FLOW_VERTEX_SHADER, fragment).also(::fullFrame)
+                }
+                OpticalFlow(built)
+            } catch (e: Exception) {
+                Log.w(TAG, "optical flow unavailable; repeating frames instead", e)
+                built.forEach { runCatching { it.delete() } }
+                null
+            }
+        }
+
         /** Lucas–Kanade rounds at each size, and at the smallest, where the motion starts from nothing. */
         private const val ROUNDS = 3
         private const val COARSEST_ROUNDS = 8
