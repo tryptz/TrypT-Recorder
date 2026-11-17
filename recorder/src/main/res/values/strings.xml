@@ -23,6 +23,9 @@
     <string name="action_stop">Stop</string>
     <string name="action_edit">Edit</string>
     <string name="action_share">Share</string>
+    <string name="action_select">Select</string>
+    <!-- Read by TalkBack for a video clip on the editor's timeline: its name, then its length. -->
+    <string name="timeline_clip">Video clip %1$s, %2$s</string>
     <string name="action_open_app">Open app</string>
     <string name="cd_recording_controls">Show recording controls</string>
     <string name="toast_saved">Saved to %1$s</string>

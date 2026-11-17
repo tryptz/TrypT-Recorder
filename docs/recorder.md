@@ -582,6 +582,10 @@ emulator, so none of it has run on a phone. Before a release, check at least:
       bundle zipped with a `media/` folder entry.
 - [ ] Backup: `adb shell bmgr backupnow` then restore — settings and drafts
       come back; stems, bundles, music and the crash report do not.
+- [ ] TalkBack: the export sheet's stepped sliders (Resolution, Frame rate,
+      Quality) read their value and move a step with a swipe up or down;
+      a timeline clip reads its name and length and "double tap to select";
+      the Record screen's share button reads "Share".
 
 **Look.** Material You: on Android 12+ the accent and its tones come from the
 wallpaper (`dynamicDarkColorScheme`), on a near-black ground kept for video;

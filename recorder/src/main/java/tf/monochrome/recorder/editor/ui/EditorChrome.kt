@@ -68,11 +68,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -463,6 +466,16 @@ internal fun StepSlider(
                 .semantics {
                     contentDescription = description
                     stateDescription = labels.getOrElse(current) { "" }
+                    // An adjustable control to TalkBack: swipe up or down (or
+                    // the volume keys) moves one step, as on a Slider.
+                    progressBarRangeInfo = ProgressBarRangeInfo(
+                        current.toFloat(), 0f..(count - 1).toFloat(), steps = (count - 2).coerceAtLeast(0),
+                    )
+                    setProgress { target ->
+                        val step = target.roundToInt().coerceIn(0, count - 1)
+                        if (step != current) select(step)
+                        true
+                    }
                 }
                 .pointerInput(count) {
                     fun stepAt(x: Float): Int {

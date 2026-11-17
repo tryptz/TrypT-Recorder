@@ -49,6 +49,10 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
@@ -56,6 +60,7 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import tf.monochrome.recorder.R
 import tf.monochrome.recorder.capture.formatDuration
 import tf.monochrome.recorder.editor.model.AudioClip
 import tf.monochrome.recorder.editor.model.AudioKind
@@ -304,6 +309,10 @@ private fun ClipBlock(clip: VideoClip, width: Dp, selected: Boolean, onClick: ()
     val heightPx = with(density) { VideoLaneHeight.roundToPx() }
     // Tiles about as wide as the lane is tall; never more than 30 per clip.
     val tiles = ceil(width.value / VideoLaneHeight.value).toInt().coerceIn(1, 30)
+    // The block is pictures only; give TalkBack the clip's name and length
+    // and say what a double tap does.
+    val description = stringResource(R.string.timeline_clip, clip.source.displayName, formatDuration(clip.durationUs / 1000))
+    val selectLabel = stringResource(R.string.action_select)
     Box(
         Modifier
             .width(width)
@@ -312,7 +321,11 @@ private fun ClipBlock(clip: VideoClip, width: Dp, selected: Boolean, onClick: ()
             .clip(RoundedCornerShape(6.dp))
             .background(Color(0xFF202020))
             .then(if (selected) Modifier.border(2.dp, Color.White, RoundedCornerShape(6.dp)) else Modifier)
-            .clickable(onClick = onClick),
+            .clickable(onClickLabel = selectLabel, onClick = onClick)
+            .semantics {
+                contentDescription = description
+                this.selected = selected
+            },
     ) {
         Row(Modifier.fillMaxSize()) {
             repeat(tiles) { i ->

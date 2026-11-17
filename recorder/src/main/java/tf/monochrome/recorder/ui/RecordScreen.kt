@@ -227,7 +227,7 @@ fun RecordScreen(onEdit: (Uri) -> Unit, modifier: Modifier = Modifier) {
                         Text(stringResource(R.string.action_play), Modifier.padding(start = 6.dp))
                     }
                     OutlinedButton(onClick = { share(context, uri, "video/mp4") }) {
-                        Icon(Icons.Filled.Share, null)
+                        Icon(Icons.Filled.Share, stringResource(R.string.action_share))
                     }
                 }
             }
