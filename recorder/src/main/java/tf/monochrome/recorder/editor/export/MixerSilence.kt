@@ -14,6 +14,13 @@ internal object MixerSilence {
 
     const val MAX_DURATION_US = maxSeconds * 1_000_000L
 
+    /**
+     * The silence file for a gap of [durationUs], made if it is missing. Disk
+     * work: CompositionFactory.build, which asks for it, is called off the main
+     * thread by the preview, exports and the music-link analysis. The file is
+     * checked every time rather than remembered, since the system may clear
+     * the cache directory while the app runs.
+     */
     @Synchronized
     fun asset(context: Context, durationUs: Long): File {
         val seconds = ((durationUs + 999_999) / 1_000_000).coerceIn(1, maxSeconds.toLong()).toInt()
