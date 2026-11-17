@@ -7,6 +7,12 @@ package tf.monochrome.recorder.editor.model
  * [steps], when non-null, marks an enum-like / toggle parameter: knobs snap to
  * [steps]+1 discrete stops across [min]..[max] and readouts render as integers.
  * The native processor stores raw floats regardless — this only shapes the UI.
+ *
+ * [reserved] marks a slot that once held a knob which did nothing (a sidechain
+ * switch with no sidechain input, a DAC quality nothing read). Projects save
+ * effect settings by index ([MixerFx.values]), so the slot stays where it was
+ * and the knobs after it keep their indices; it is never shown, and the
+ * native effect ignores it (its enum names it `RESERVED_…`).
  */
 data class ParamDef(
     val name: String,
@@ -14,12 +20,23 @@ data class ParamDef(
     val max: Float,
     val default: Float,
     val unit: String = "",
-    val steps: Int? = null
-)
+    val steps: Int? = null,
+    val reserved: Boolean = false,
+) {
+    companion object {
+        fun reserved(was: String) = ParamDef(was, 0f, 0f, 0f, reserved = true)
+    }
+}
+
+/** The indices of [defs] the editor shows, in order: all but the reserved ones. */
+internal fun shownParams(defs: List<ParamDef>): List<Int> = defs.indices.filterNot { defs[it].reserved }
 
 /**
  * Ordered parameter list per snapin type. Order and count mirror the native
  * `enum Params` in the per-effect `cpp/dsp/snapins` headers (index == native param index).
+ * `FxParametersNativeTest` reads those headers and holds the two together.
+ * A new parameter goes at the end of its list, never in the middle: saved
+ * projects store values by index.
  *
  * The `when` is intentionally exhaustive (no `else`): adding a new [SnapinType]
  * without a branch here is a compile error rather than a silently-empty editor.
@@ -78,7 +95,7 @@ internal fun getParamDefs(type: SnapinType): List<ParamDef> = when (type) {
         ParamDef("Range", 0f, 80f, 80f, "dB"),
         ParamDef("Lookahead", 0f, 1f, 0f, "", steps = 1),
         ParamDef("Flip", 0f, 1f, 0f, "", steps = 1),
-        ParamDef("SC", 0f, 1f, 0f, "", steps = 1)
+        ParamDef.reserved("SC")
     )
     SnapinType.DYNAMICS -> listOf(
         ParamDef("Lo Thr", -60f, 0f, -40f, "dB"),
@@ -100,7 +117,7 @@ internal fun getParamDefs(type: SnapinType): List<ParamDef> = when (type) {
         ParamDef("Mode", 0f, 2f, 1f, "", steps = 2),
         ParamDef("Range", 0f, 200f, 100f, "%"),
         ParamDef("Stereo", 0f, 100f, 0f, "%"),
-        ParamDef("SC", 0f, 1f, 0f, "", steps = 1)
+        ParamDef.reserved("SC")
     )
     SnapinType.TRANSIENT_SHAPER -> listOf(
         ParamDef("Attack", -100f, 100f, 0f, "%"),
@@ -108,7 +125,7 @@ internal fun getParamDefs(type: SnapinType): List<ParamDef> = when (type) {
         ParamDef("Sustain", -100f, 100f, 0f, "%"),
         ParamDef("Speed", 0f, 100f, 50f, "%"),
         ParamDef("Clip", 0f, 1f, 0f, "", steps = 1),
-        ParamDef("SC", 0f, 1f, 0f, "", steps = 1)
+        ParamDef.reserved("SC")
     )
     SnapinType.DISTORTION -> listOf(
         ParamDef("Drive", 0f, 48f, 12f, "dB"),
@@ -147,6 +164,8 @@ internal fun getParamDefs(type: SnapinType): List<ParamDef> = when (type) {
         ParamDef("Depth", 0f, 100f, 50f, "%"),
         ParamDef("Rate", 0.01f, 10f, 0.5f, "Hz"),
         ParamDef("FB", -95f, 95f, 30f, "%"),
+        // The L/R LFO offset: 100 % is 180° (flanger.h scales it). Before
+        // this the native side read the value as degrees.
         ParamDef("Stereo", 0f, 100f, 50f, "%"),
         ParamDef("Tone", 200f, 20000f, 12000f, "Hz"),
         ParamDef("Thru-0", 0f, 1f, 0f, "", steps = 1),
@@ -191,7 +210,7 @@ internal fun getParamDefs(type: SnapinType): List<ParamDef> = when (type) {
         ParamDef("Rate", 200f, 48000f, 48000f, "Hz"),
         ParamDef("Bits", 1f, 24f, 24f, ""),
         ParamDef("ADC", 0f, 100f, 100f, "%"),
-        ParamDef("DAC", 0f, 100f, 100f, "%"),
+        ParamDef.reserved("DAC"),
         ParamDef("Dither", 0f, 100f, 0f, "%"),
         ParamDef("Mix", 0f, 100f, 100f, "%")
     )
@@ -259,7 +278,7 @@ internal fun getParamDefs(type: SnapinType): List<ParamDef> = when (type) {
     )
     SnapinType.REVERSER -> listOf(
         ParamDef("Time", 50f, 2000f, 250f, "ms"),
-        ParamDef("Sync", 0f, 1f, 0f, "", steps = 1),
+        ParamDef.reserved("Sync"),
         ParamDef("X-Fade", 1f, 50f, 10f, "%"),
         ParamDef("Mix", 0f, 100f, 50f, "%")
     )
@@ -284,7 +303,9 @@ internal fun getParamDefs(type: SnapinType): List<ParamDef> = when (type) {
         ParamDef("Sustain", 0f, 100f, 100f, "%"),
         ParamDef("Release", 0.1f, 500f, 10f, "ms"),
         ParamDef("Mix", 0f, 100f, 100f, "%"),
-        ParamDef("Res", 0f, 3f, 2f, "", steps = 3)
+        ParamDef("Res", 0f, 3f, 2f, "", steps = 3),
+        // Last, so the indices before it are those older projects saved.
+        ParamDef("BPM", 40f, 240f, 120f, "")
     )
     SnapinType.EQ_10BAND -> buildList {
         // 51 params: preamp + 10 bands x (freq, gain, Q, type, enabled).

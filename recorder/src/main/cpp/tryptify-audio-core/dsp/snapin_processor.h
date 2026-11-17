@@ -64,6 +64,21 @@ public:
 
     int getOversampling() const { return osFactor_; }
 
+    // ── Latency ──────────────────────────────────────────────────────────
+    // An effect that delays its whole output — a lookahead limiter or gate —
+    // reports by how much, in samples at the rate prepare() was given, so a
+    // host mixing it with the dry signal can delay the dry by the same and
+    // not comb-filter. getMaxLatencySamples() is the most it can report for
+    // any parameter value, for sizing that delay once, off the audio path.
+    // Effects whose delay is the sound itself (Delay, Reverb, Pitch Shifter's
+    // grains) report 0.
+    virtual int getLatencySamples() const { return 0; }
+    virtual int getMaxLatencySamples() const { return getLatencySamples(); }
+
+    // The same in base-rate samples, with the oversampling filters' delay.
+    int getLatencyOS() const { return toBaseSamples(getLatencySamples()) + osLatency_; }
+    int getMaxLatencyOS() const { return toBaseSamples(getMaxLatencySamples()) + osLatency_; }
+
     void processOS(float* left, float* right, int numFrames) {
         if (osFactor_ <= 1 || osBufL_.empty()) {
             process(left, right, numFrames);
@@ -83,20 +98,25 @@ protected:
     float dryWet_ = 1.0f;  // 0 = fully dry, 1 = fully wet
 
 private:
+    int toBaseSamples(int internal) const { return (internal + osFactor_ / 2) / osFactor_; }
+
     void applyOS() {
         if (osFactor_ > 1) {
             osBufL_.assign(static_cast<size_t>(osBaseBlock_) * osFactor_, 0.0f);
             osBufR_.assign(static_cast<size_t>(osBaseBlock_) * osFactor_, 0.0f);
             osL_.prepare(osBaseRate_, osFactor_);
             osR_.prepare(osBaseRate_, osFactor_);
+            osLatency_ = static_cast<int>(std::lround(osL_.latencyBaseSamples(osBaseRate_)));
         } else {
             osBufL_.clear();
             osBufR_.clear();
+            osLatency_ = 0;
         }
         prepare(osBaseRate_ * osFactor_, osBaseBlock_ * osFactor_);
     }
 
     int osFactor_ = 1;
+    int osLatency_ = 0;
     double osBaseRate_ = 0.0;
     int osBaseBlock_ = 0;
     std::vector<float> osBufL_, osBufR_;

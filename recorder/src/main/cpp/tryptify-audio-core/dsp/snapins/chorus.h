@@ -24,13 +24,24 @@ public:
     };
 
     static constexpr int MAX_VOICES = 8;
+    static constexpr double MAX_DELAY_MS = 40.0;
+
+    // The furthest back any voice reads: the longest base delay, plus the
+    // last voice's offset (+5 % of it), plus full depth (100 % of it), plus
+    // the two samples past the read point that the cubic read touches. A
+    // read beyond the buffer would wrap round to the newest samples.
+    static int maxReadSamples(double sampleRate) {
+        const double longest = MAX_DELAY_MS * 0.001 * sampleRate * (1.0 + 0.05 + 1.0);
+        return static_cast<int>(std::ceil(longest)) + 2;
+    }
+
+    int capacity() const { return delayL_[0].getMaxDelay(); }
 
     void prepare(double sampleRate, int maxBlockSize) override {
         sampleRate_ = sampleRate;
         maxBlockSize_ = maxBlockSize;
 
-        // Max delay: base 40ms + modulation depth headroom
-        int maxSamples = static_cast<int>(0.08 * sampleRate) + 64;
+        const int maxSamples = maxReadSamples(sampleRate);
         for (int v = 0; v < MAX_VOICES; v++) {
             delayL_[v].prepare(maxSamples);
             delayR_[v].prepare(maxSamples);

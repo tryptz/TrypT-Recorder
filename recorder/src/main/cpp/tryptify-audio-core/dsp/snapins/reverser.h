@@ -7,8 +7,11 @@
 // Captures audio segments, plays them backwards with crossfade.
 class ReverserProcessor : public SnapinProcessor {
 public:
+    // RESERVED_SYNC was a tempo-sync switch that nothing read (there is no
+    // tempo here). The slot stays so the parameters after it keep their
+    // indices in saved settings.
     enum Params {
-        TIME_MS = 0, SYNC, CROSSFADE_PCT, MIX, NUM_PARAMS
+        TIME_MS = 0, RESERVED_SYNC, CROSSFADE_PCT, MIX, NUM_PARAMS
     };
 
     void prepare(double sampleRate, int maxBlockSize) override {
@@ -71,7 +74,6 @@ public:
     void setParameter(int index, float value) override {
         switch (index) {
             case TIME_MS:       timeMs_ = std::max(50.0f, std::min(2000.0f, value)); break;
-            case SYNC:          sync_ = value > 0.5f; break;
             case CROSSFADE_PCT: crossfadePct_ = std::max(1.0f, std::min(50.0f, value)); break;
             case MIX:           mix_ = std::max(0.0f, std::min(100.0f, value)); break;
         }
@@ -80,7 +82,6 @@ public:
     float getParameter(int index) const override {
         switch (index) {
             case TIME_MS:       return timeMs_;
-            case SYNC:          return sync_ ? 1.0f : 0.0f;
             case CROSSFADE_PCT: return crossfadePct_;
             case MIX:           return mix_;
             default: return 0.0f;
@@ -99,7 +100,6 @@ public:
 
 private:
     float timeMs_ = 250.0f;
-    bool sync_ = false;
     float crossfadePct_ = 10.0f;
     float mix_ = 50.0f;
 

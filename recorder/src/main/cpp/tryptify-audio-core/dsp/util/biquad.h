@@ -1,5 +1,6 @@
 #pragma once
 #include <cmath>
+#include <complex>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -130,6 +131,18 @@ public:
         for (int i = 0; i < numFrames; i++) {
             data[i] = process(data[i]);
         }
+    }
+
+    // Phase delay in samples at [w] radians per sample: how far a sine of that
+    // frequency comes out behind where it went in. Used to line a dry signal
+    // up with a filtered one. Valid while the filter turns the phase by less
+    // than half a turn at [w], which a low-pass well below its corner does.
+    double phaseDelay(double w) const {
+        if (w <= 0.0) return 0.0;
+        const std::complex<double> z1 = std::polar(1.0, -w), z2 = z1 * z1;
+        const std::complex<double> h = (double(b0_) + double(b1_) * z1 + double(b2_) * z2)
+            / (1.0 + double(a1_) * z1 + double(a2_) * z2);
+        return -std::arg(h) / w;
     }
 
 private:

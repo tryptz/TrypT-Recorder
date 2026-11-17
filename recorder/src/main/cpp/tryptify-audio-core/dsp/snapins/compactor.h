@@ -9,10 +9,15 @@
 // Envelope follower modes: RMS, Peak, ISP (inter-sample peak).
 class CompactorProcessor : public SnapinProcessor {
 public:
+    // RESERVED_SIDECHAIN was a sidechain switch with no sidechain input
+    // behind it. The slot stays so saved settings keep their indices; it is
+    // ignored.
     enum Params {
         ATTACK = 0, HOLD, RELEASE, THRESHOLD, MODE,
-        RANGE_PCT, STEREO_LINK, SIDECHAIN, NUM_PARAMS
+        RANGE_PCT, STEREO_LINK, RESERVED_SIDECHAIN, NUM_PARAMS
     };
+
+    static constexpr float MAX_ATTACK_MS = 50.0f;
 
     void prepare(double sampleRate, int maxBlockSize) override {
         sampleRate_ = sampleRate;
@@ -27,6 +32,10 @@ public:
         envL_.setMode(DetectionMode::Peak);
         envR_.setMode(DetectionMode::Peak);
 
+        // Room for the longest attack now, so turning the knob never
+        // allocates on the audio thread.
+        lookaheadL_.prepare(samplesFor(MAX_ATTACK_MS));
+        lookaheadR_.prepare(samplesFor(MAX_ATTACK_MS));
         updateLookahead();
 
         gainL_ = 1.0f;
@@ -103,7 +112,6 @@ public:
                 break;
             case RANGE_PCT:    rangePct_ = std::max(0.0f, std::min(200.0f, value)); break;
             case STEREO_LINK:  stereoLink_ = std::max(0.0f, std::min(1.0f, value / 100.0f)); break;
-            case SIDECHAIN:    sidechain_ = value > 0.5f; break;
         }
     }
 
@@ -116,21 +124,26 @@ public:
             case MODE:         return static_cast<float>(mode_);
             case RANGE_PCT:    return rangePct_;
             case STEREO_LINK:  return stereoLink_ * 100.0f;
-            case SIDECHAIN:    return sidechain_ ? 1.0f : 0.0f;
             default: return 0.0f;
         }
     }
+
+    // The attack is a delay on the audio: the gain drops before the peak.
+    int getLatencySamples() const override { return lookaheadL_.getDelay(); }
+    int getMaxLatencySamples() const override { return samplesFor(MAX_ATTACK_MS); }
 
     int getNumParameters() const override { return NUM_PARAMS; }
     const char* getName() const override { return "Compactor"; }
     SnapinType getType() const override { return SnapinType::COMPACTOR; }
 
 private:
+    int samplesFor(float ms) const {
+        return std::max(1, static_cast<int>(ms * 0.001f * static_cast<float>(sampleRate_)));
+    }
+
     void updateLookahead() {
-        int samples = static_cast<int>(attackMs_ * 0.001f * static_cast<float>(sampleRate_));
-        if (samples < 1) samples = 1;
-        lookaheadL_.prepare(samples);
-        lookaheadR_.prepare(samples);
+        lookaheadL_.setDelay(samplesFor(attackMs_));
+        lookaheadR_.setDelay(samplesFor(attackMs_));
     }
 
     float computeGain(float envVal, float threshLin, float rangeFactor) const {
@@ -168,7 +181,6 @@ private:
     int mode_ = 1;  // 0=RMS, 1=Peak, 2=ISP
     float rangePct_ = 100.0f;
     float stereoLink_ = 0.0f;  // 0=linked, 1=dual-mono
-    bool sidechain_ = false;
 
     EnvelopeFollower envL_, envR_;
     LookaheadBuffer lookaheadL_, lookaheadR_;

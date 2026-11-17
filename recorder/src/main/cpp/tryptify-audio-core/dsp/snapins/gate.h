@@ -8,9 +8,12 @@
 // Noise gate with hysteresis, lookahead, and flip mode.
 class GateProcessor : public SnapinProcessor {
 public:
+    // RESERVED_SIDECHAIN was a sidechain switch with no sidechain input
+    // behind it. The slot stays so saved settings keep their indices; it is
+    // ignored.
     enum Params {
         ATTACK = 0, HOLD, RELEASE, THRESHOLD, TOLERANCE,
-        RANGE, LOOKAHEAD, FLIP, SIDECHAIN, NUM_PARAMS
+        RANGE, LOOKAHEAD, FLIP, RESERVED_SIDECHAIN, NUM_PARAMS
     };
 
     void prepare(double sampleRate, int maxBlockSize) override {
@@ -103,7 +106,6 @@ public:
             case RANGE:     rangeDb_ = std::max(0.0f, std::min(80.0f, value)); break;
             case LOOKAHEAD: lookahead_ = value > 0.5f; break;
             case FLIP:      flip_ = value > 0.5f; break;
-            case SIDECHAIN: sidechain_ = value > 0.5f; break;
         }
     }
 
@@ -117,7 +119,6 @@ public:
             case RANGE:     return rangeDb_;
             case LOOKAHEAD: return lookahead_ ? 1.0f : 0.0f;
             case FLIP:      return flip_ ? 1.0f : 0.0f;
-            case SIDECHAIN: return sidechain_ ? 1.0f : 0.0f;
             default: return 0.0f;
         }
     }
@@ -129,6 +130,10 @@ public:
         holdCounter_ = 0;
         gateOpen_ = false;
     }
+
+    // With lookahead on, the audio runs through a 5 ms delay.
+    int getLatencySamples() const override { return lookahead_ ? lookaheadSamples_ : 0; }
+    int getMaxLatencySamples() const override { return lookaheadSamples_; }
 
     int getNumParameters() const override { return NUM_PARAMS; }
     const char* getName() const override { return "Gate"; }
@@ -143,7 +148,6 @@ private:
     float rangeDb_ = 80.0f;
     bool lookahead_ = false;
     bool flip_ = false;
-    bool sidechain_ = false;
 
     EnvelopeFollower envL_, envR_;
     LookaheadBuffer lookaheadL_, lookaheadR_;

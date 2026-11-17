@@ -824,14 +824,14 @@ private fun DrawScope.drawTransientShaper(s: FxVisualStyle, p: (Int) -> Float) {
 
 /**
  * Trance gate: the actual step pattern with sustain level and, while running,
- * a 120 BPM playhead stepping at the selected resolution.
+ * a playhead stepping at the gate's BPM and resolution.
  */
 private fun DrawScope.drawTranceGate(s: FxVisualStyle, p: (Int) -> Float, time: Float) {
     val pattern = M.TRANCE_PATTERNS[p(0).toInt().coerceIn(0, M.TRANCE_PATTERNS.size - 1)]
     val length = p(1).toInt().coerceIn(1, 32)
     val sustain = (p(4) / 100f).coerceIn(0f, 1f)
-    // Native runs at 120 BPM: resolution 0..3 = 1/4..1/32 → 2/4/8/16 steps per second.
-    val stepsPerSec = 2f * 2f.pow(p(7).toInt().coerceIn(0, 3))
+    // Beats per second × steps per beat: resolution 0..3 = 1/4..1/32 → 1/2/4/8 steps a beat.
+    val stepsPerSec = p(8).coerceIn(40f, 240f) / 60f * 2f.pow(p(7).toInt().coerceIn(0, 3))
     val playStep = (floor(time * stepsPerSec).toInt()).mod(length)
     val stepW = size.width / length
     val floorY = size.height * 0.92f

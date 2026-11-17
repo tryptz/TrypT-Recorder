@@ -413,6 +413,8 @@ internal object FxVisualMath {
         pattern { intArrayOf(0, 3, 6, 9, 12, 15).forEach { this[it] = true } }   // dotted
         pattern { for (s in 8 until 16) this[s] = true }                     // buildup
         pattern { intArrayOf(0, 1, 4, 5, 8, 9, 12, 13).forEach { this[it] = true } }  // stutter
+        // The bars above are 16 steps and Length runs to 32: the second bar repeats the first.
+        forEach { steps -> for (s in 16 until 32) steps[s] = steps[s - 16] }
         pattern { for (s in 0 until 32) this[s] = true }                     // all on
     }
 

@@ -34,6 +34,17 @@ public:
 
     int factor() const { return factor_; }
 
+    // How many base-rate samples the round trip (upsample, then downsample)
+    // delays a signal at [freqHz], from the filters' phase. Both filters of a
+    // stage add theirs; the second stage of 4x runs an octave higher, so one
+    // of its samples is a quarter of a base sample. 0 at 1x.
+    double latencyBaseSamples(double baseRate, double freqHz = 1000.0) const {
+        if (factor_ <= 1 || baseRate <= 0.0) return 0.0;
+        double total = stageDelay(s1_, 2.0 * M_PI * freqHz / (baseRate * 2.0)) / 2.0;
+        if (factor_ >= 4) total += stageDelay(s2_, 2.0 * M_PI * freqHz / (baseRate * 4.0)) / 4.0;
+        return total;
+    }
+
     // [out] must hold n * factor samples.
     void upsample(const float* in, float* out, int n) {
         int k = 0;
@@ -84,6 +95,12 @@ private:
             s.up[i].configure(BiquadType::LowPass, osRate, fc, kQ[i]);
             s.down[i].configure(BiquadType::LowPass, osRate, fc, kQ[i]);
         }
+    }
+
+    static double stageDelay(const Stage& s, double w) {
+        double d = 0.0;
+        for (int i = 0; i < kStages; i++) d += s.up[i].phaseDelay(w) + s.down[i].phaseDelay(w);
+        return d;
     }
 
     static void resetStage(Stage& s) {

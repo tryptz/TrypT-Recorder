@@ -148,6 +148,12 @@ public:
         gainEnvDb_ = 0.0f;
     }
 
+    // Look delays the audio; the gain is worked out from the undelayed input.
+    int getLatencySamples() const override { return lookaheadSamples_; }
+    int getMaxLatencySamples() const override {
+        return static_cast<int>(0.010 * sampleRate_) + 1;  // as prepare() sizes the delay
+    }
+
     int getNumParameters() const override { return NUM_PARAMS; }
     const char* getName() const override { return "Compressor"; }
     SnapinType getType() const override { return SnapinType::COMPRESSOR; }

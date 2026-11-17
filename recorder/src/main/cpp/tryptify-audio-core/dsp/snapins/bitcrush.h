@@ -2,13 +2,15 @@
 #include "snapin_processor.h"
 #include <cmath>
 #include <algorithm>
-#include <cstdlib>
+#include "fast_random.h"
 
 // Lo-fi: reduced sample rate + bit depth with optional dither.
 class BitcrushProcessor : public SnapinProcessor {
 public:
+    // RESERVED_DAC was a "DAC quality" knob that nothing read. The slot stays
+    // so the parameters after it keep their indices in saved settings.
     enum Params {
-        RATE = 0, BITS, ADC_QUALITY, DAC_QUALITY, DITHER, MIX, NUM_PARAMS
+        RATE = 0, BITS, ADC_QUALITY, RESERVED_DAC, DITHER, MIX, NUM_PARAMS
     };
 
     void prepare(double sampleRate, int maxBlockSize) override {
@@ -45,8 +47,8 @@ public:
 
                 // Triangular PDF dither
                 if (ditherAmt > 0.0f) {
-                    float d1 = (static_cast<float>(rand()) / RAND_MAX) * 2.0f - 1.0f;
-                    float d2 = (static_cast<float>(rand()) / RAND_MAX) * 2.0f - 1.0f;
+                    float d1 = random_.bipolar();
+                    float d2 = random_.bipolar();
                     float tpdf = (d1 + d2) * 0.5f;
                     float lsb = 1.0f / levels;
                     inL += tpdf * lsb * ditherAmt;
@@ -58,7 +60,6 @@ public:
                 holdR_ = std::round(inR * levels) / levels;
             }
 
-            // DAC quality: interpolation smoothing (quality 0 = ZOH, 100 = smooth)
             float wetL = holdL_;
             float wetR = holdR_;
 
@@ -72,7 +73,6 @@ public:
             case RATE:        rate_ = std::max(200.0f, std::min(static_cast<float>(sampleRate_), value)); break;
             case BITS:        bits_ = std::max(1.0f, std::min(24.0f, value)); break;
             case ADC_QUALITY: adcQuality_ = std::max(0.0f, std::min(100.0f, value)); break;
-            case DAC_QUALITY: dacQuality_ = std::max(0.0f, std::min(100.0f, value)); break;
             case DITHER:      dither_ = std::max(0.0f, std::min(100.0f, value)); break;
             case MIX:         mix_ = std::max(0.0f, std::min(100.0f, value)); break;
         }
@@ -83,7 +83,6 @@ public:
             case RATE:        return rate_;
             case BITS:        return bits_;
             case ADC_QUALITY: return adcQuality_;
-            case DAC_QUALITY: return dacQuality_;
             case DITHER:      return dither_;
             case MIX:         return mix_;
             default: return 0.0f;
@@ -98,10 +97,10 @@ private:
     float rate_ = 44100.0f;
     float bits_ = 24.0f;
     float adcQuality_ = 100.0f;
-    float dacQuality_ = 100.0f;
     float dither_ = 0.0f;
     float mix_ = 100.0f;
 
     float holdL_ = 0.0f, holdR_ = 0.0f;
     float phaseAcc_ = 0.0f;
+    FastRandom random_;
 };

@@ -9,8 +9,11 @@
 // Transient component = fast - slow.
 class TransientShaperProcessor : public SnapinProcessor {
 public:
+    // RESERVED_SIDECHAIN was a sidechain switch with no sidechain input
+    // behind it. The slot stays so saved settings keep their indices; it is
+    // ignored.
     enum Params {
-        ATTACK_AMT = 0, PUMP, SUSTAIN_AMT, SPEED, CLIP, SIDECHAIN, NUM_PARAMS
+        ATTACK_AMT = 0, PUMP, SUSTAIN_AMT, SPEED, CLIP, RESERVED_SIDECHAIN, NUM_PARAMS
     };
 
     void prepare(double sampleRate, int maxBlockSize) override {
@@ -105,7 +108,6 @@ public:
                 updateSpeed();
                 break;
             case CLIP:      clip_ = value > 0.5f; break;
-            case SIDECHAIN: sidechain_ = value > 0.5f; break;
         }
     }
 
@@ -116,7 +118,6 @@ public:
             case SUSTAIN_AMT: return sustainAmt_;
             case SPEED:       return speed_;
             case CLIP:        return clip_ ? 1.0f : 0.0f;
-            case SIDECHAIN:   return sidechain_ ? 1.0f : 0.0f;
             default: return 0.0f;
         }
     }
@@ -155,7 +156,6 @@ private:
     float sustainAmt_ = 0.0f;
     float speed_ = 50.0f;
     bool clip_ = false;
-    bool sidechain_ = false;
 
     EnvelopeFollower fastEnvL_, fastEnvR_;
     EnvelopeFollower slowEnvL_, slowEnvR_;

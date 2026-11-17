@@ -418,6 +418,57 @@ clean):
   Delay, Reverb and the combs). All four corrected and measured.
 - **The JNI bridge checks every index and buffer size** from Kotlin, so a
   mistake there is ignored instead of corrupting memory.
+- **Limiter** wrote a raised-cosine attack into a buffer and then applied the
+  deeper of it and an envelope that had already jumped to the full
+  reduction, so the gain fell in one sample (measured: a 0.50 gain step on a
+  quiet-to-loud step). It now takes the smallest gain any sample in the
+  lookahead window needs and smooths that with two moving averages that
+  together span the window exactly: provably never over the threshold, and
+  the gain comes down along an S-curve across the whole lookahead (largest
+  step 0.004). Its window was found from a signed `int` sample count that
+  went negative after 2³¹ samples (12 h at 48 kHz) and indexed before its
+  buffer; positions are now an unsigned counter compared only by difference.
+- **Wet/dry is latency-aligned.** Each effect reports its latency — Limiter,
+  Compressor and Gate lookahead, Compactor attack, and the oversampling
+  filters' phase delay (3 samples at 2×, 5 at 4×, at 48 kHz) — and `FxChain`
+  delays that effect's dry signal by it before blending, from buffers sized
+  when the effect is added. Before, a limiter at 50 % wet summed two copies 5
+  ms apart (a comb with notches every 200 Hz), and any effect at 2×/4× and
+  50 % lost up to 80 % of the level near 6 kHz. Not compensated: a bus with
+  lookahead effects still runs that much behind the other buses (at most a
+  few tens of milliseconds with every lookahead at its longest). Pitch
+  Shifter's grains have no fixed delay to report.
+- **Knobs that did nothing** — the Gate, Compactor and Transient Shaper "SC"
+  (no sidechain input exists), Bitcrush "DAC" and Reverser "Sync" — are no
+  longer shown. Their slots stay, hidden (`ParamDef.reserved`, native
+  `RESERVED_…`), because projects save effect values by index: removing them
+  would have moved Bitcrush's Dither and Mix and Reverser's X-Fade and Mix
+  onto the wrong knobs in saved projects. `FxParametersNativeTest` reads the
+  native headers and fails if a Kotlin list and its native enum disagree.
+- **Trance Gate** ran at a fixed 120 BPM and its patterns filled 16 of the
+  32 steps Length allows. It has a BPM knob (40–240, default 120; the last
+  parameter, so older projects keep their indices and their old tempo), and
+  each pattern's bar repeats over steps 16–31.
+- **Flanger Stereo** was shown as 0–100 % but read as 0–360°. It is a
+  percentage now, 100 % = 180°; presets written in degrees were converted
+  (90° → 50 %). A project saved before plays its Stereo value as a
+  percentage, so 50 % becomes 90° instead of 50°.
+- **Stereo** panned with an equal-power law, 3 dB down on both sides at the
+  centre, so adding it at its defaults made a track quieter. It is now a
+  balance with unity at the centre, the same law as the mixer's pan.
+- **Chorus** sized its delay lines for 80 ms + 64 samples; eight voices at
+  40 ms and full depth read 82 ms plus the cubic read's margin, past the end
+  (at 48 kHz, 3,938 samples into a 3,908-sample line), which wrapped round to
+  the newest audio. Sized from the real maximum now.
+- **No `rand()` on the audio thread**: Bitcrush dither and Pitch Shifter
+  jitter called it, and bionic's takes a lock. Each effect has its own
+  xorshift generator (`FastRandom`). Compactor no longer reallocates its
+  delay when Attack moves.
+
+Host tests: `recorder_mixer_test` and `recorder_dsp_test`, which covers each
+fix above (its limiter attack, wet/dry and Stereo checks were run against the
+code before the fix and failed). Run them with
+`cmake -S recorder/src/main/cpp -B /tmp/dsp -G Ninja && cmake --build /tmp/dsp && ctest --test-dir /tmp/dsp`.
 
 ### Creative assets and Music Links
 
@@ -495,6 +546,13 @@ emulator, so none of it has run on a phone. Before a release, check at least:
 - [ ] Mixer effects: Resonator, Shaper (Mirror), Ladder (Sat off, high cutoff,
       resonance 100) never silence a bus or hang an export; Pitch Shifter up
       sounds higher; Reverser plays backwards; Tape Stop slows to a stop.
+      Limiter on a loud master: no click as it clamps, level never over its
+      ceiling; a limiter, and any effect at 2×/4×, at 50 % wet sounds like
+      the effect, not hollow or phasey; Trance Gate's BPM knob changes the
+      speed and Length 32 keeps gating; Stereo at its defaults does not
+      change the level; a project saved before this (Bitcrush, Reverser,
+      Flanger, Trance Gate in its chain) opens and sounds as it did, apart
+      from Flanger's Stereo now meaning a percentage.
 - [ ] Look: the accent follows the wallpaper (Android 12+); the top bar,
       export sheet, segmented control and dock are glass that bends and
       frosts what is under it (Android 13+), a plain surface on 10–12;

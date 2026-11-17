@@ -91,6 +91,7 @@ import tf.monochrome.recorder.editor.ui.fx.FxPresets
 import tf.monochrome.recorder.editor.ui.fx.FxVisual
 import tf.monochrome.recorder.editor.ui.fx.rememberFxChainDragState
 import tf.monochrome.recorder.editor.model.getParamDefs
+import tf.monochrome.recorder.editor.model.shownParams
 import kotlin.math.log10
 import kotlin.math.pow
 
@@ -535,7 +536,7 @@ private fun FxCard(
                                 )
                             }
                         }
-                        val indices = defs.indices.toList()
+                        val indices = remember(defs) { shownParams(defs) }
                         val rows = if (fx.type == SnapinType.EQ_10BAND) listOf(listOf(0)) + indices.drop(1).chunked(5)
                         else indices.chunked(4)
                         for ((rowIndex, row) in rows.withIndex()) {

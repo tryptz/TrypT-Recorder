@@ -3,7 +3,7 @@
 #include "crossfade_buffer.h"
 #include <cmath>
 #include <algorithm>
-#include <cstdlib>
+#include "fast_random.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -25,8 +25,6 @@ public:
         bufL_.prepare(maxSamples);
         bufR_.prepare(maxSamples);
         grainPhase_ = 0.0f;
-        readOffsetL_ = 0.0f;
-        readOffsetR_ = 0.0f;
     }
 
     void process(float* left, float* right, int numFrames) override {
@@ -59,7 +57,7 @@ public:
             float delay2 = (rateOffset > 0.0f ? 1.0f - phase2 : phase2) * span;
 
             if (jitter_ > 0.0f) {
-                float j = (static_cast<float>(rand()) / RAND_MAX) * jitter_ / 100.0f * grainSamples * 0.1f;
+                float j = random_.uniform() * jitter_ / 100.0f * grainSamples * 0.1f;
                 delay1 += j;
                 delay2 += j;
             }
@@ -114,5 +112,5 @@ private:
 
     CrossfadeBuffer bufL_, bufR_;
     float grainPhase_ = 0.0f;
-    float readOffsetL_ = 0.0f, readOffsetR_ = 0.0f;
+    FastRandom random_;
 };

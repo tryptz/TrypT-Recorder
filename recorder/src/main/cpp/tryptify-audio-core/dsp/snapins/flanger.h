@@ -47,7 +47,9 @@ public:
         lfoL_.setRate(rate_);
         lfoR_.setRate(rate_);
         lfoL_.setPhaseOffset(0.0f);
-        lfoR_.setPhaseOffset(stereoOffset_);
+        // Stereo is a percentage, as the app shows it: 100 % puts the two
+        // LFOs half a cycle (180°) apart, the widest a flanger is set.
+        lfoR_.setPhaseOffset(stereoPct_ * 1.8f);
 
         // Update tone filter
         double toneFreqClamped = std::max(200.0, std::min(static_cast<double>(tone_),
@@ -105,7 +107,7 @@ public:
             case DEPTH:        depth_ = std::max(0.0f, std::min(100.0f, value)); break;
             case RATE:         rate_ = std::max(0.01f, std::min(10.0f, value)); break;
             case FEEDBACK:     feedback_ = std::max(-95.0f, std::min(95.0f, value)); break;
-            case STEREO:       stereoOffset_ = std::max(0.0f, std::min(360.0f, value)); break;
+            case STEREO:       stereoPct_ = std::max(0.0f, std::min(100.0f, value)); break;
             case TONE:         tone_ = std::max(200.0f, std::min(20000.0f, value)); break;
             case THROUGH_ZERO: throughZero_ = value > 0.5f; break;
             case MIX:          mix_ = std::max(0.0f, std::min(100.0f, value)); break;
@@ -118,7 +120,7 @@ public:
             case DEPTH:        return depth_;
             case RATE:         return rate_;
             case FEEDBACK:     return feedback_;
-            case STEREO:       return stereoOffset_;
+            case STEREO:       return stereoPct_;
             case TONE:         return tone_;
             case THROUGH_ZERO: return throughZero_ ? 1.0f : 0.0f;
             case MIX:          return mix_;
@@ -144,7 +146,7 @@ private:
     float depth_ = 50.0f;
     float rate_ = 0.5f;
     float feedback_ = 30.0f;
-    float stereoOffset_ = 0.0f;
+    float stereoPct_ = 50.0f;
     float tone_ = 10000.0f;
     bool throughZero_ = false;
     float mix_ = 50.0f;

@@ -9,11 +9,19 @@ class TranceGateProcessor : public SnapinProcessor {
 public:
     enum Params {
         PATTERN = 0, LENGTH, ATTACK, DECAY, SUSTAIN, RELEASE,
-        MIX, RESOLUTION, NUM_PARAMS
+        MIX, RESOLUTION, BPM, NUM_PARAMS
     };
 
     static constexpr int MAX_STEPS = 32;
     static constexpr int NUM_PATTERNS = 8;
+    // BPM came last so the indices before it did not move.
+    static constexpr float MIN_BPM = 40.0f;
+    static constexpr float MAX_BPM = 240.0f;
+
+    bool isStepOn(int pattern, int step) const {
+        if (pattern < 0 || pattern >= NUM_PATTERNS || step < 0 || step >= MAX_STEPS) return false;
+        return patterns_[pattern][step];
+    }
 
     void prepare(double sampleRate, int maxBlockSize) override {
         sampleRate_ = sampleRate;
@@ -25,8 +33,9 @@ public:
     }
 
     void process(float* left, float* right, int numFrames) override {
-        // Steps per second based on BPM and resolution
-        float bpm = 120.0f;  // Default BPM (could be synced from metadata)
+        // Steps per second based on BPM and resolution. The project has no
+        // tempo of its own, so the gate has a knob for it.
+        float bpm = bpm_;
         float beatsPerSec = bpm / 60.0f;
         float stepsPerBeat;
         switch (resolution_) {
@@ -98,6 +107,7 @@ public:
             case RELEASE:    releaseMs_ = std::max(0.1f, std::min(500.0f, value)); break;
             case MIX:        mix_ = std::max(0.0f, std::min(100.0f, value)); break;
             case RESOLUTION: resolution_ = static_cast<int>(std::max(0.0f, std::min(3.0f, value))); break;
+            case BPM:        bpm_ = std::max(MIN_BPM, std::min(MAX_BPM, value)); break;
         }
     }
 
@@ -111,6 +121,7 @@ public:
             case RELEASE:    return releaseMs_;
             case MIX:        return mix_;
             case RESOLUTION: return static_cast<float>(resolution_);
+            case BPM:        return bpm_;
             default: return 0.0f;
         }
     }
@@ -140,6 +151,11 @@ private:
         patterns_[6][0]=true; patterns_[6][1]=true; patterns_[6][4]=true;
         patterns_[6][5]=true; patterns_[6][8]=true; patterns_[6][9]=true;
         patterns_[6][12]=true; patterns_[6][13]=true;
+        // Patterns 0-6 are one 16-step bar; Length runs to 32, so the second
+        // bar plays the first again rather than falling silent.
+        for (int p = 0; p < 7; p++) {
+            for (int s = 16; s < MAX_STEPS; s++) patterns_[p][s] = patterns_[p][s - 16];
+        }
         // Pattern 7: all on
         for (int s = 0; s < 32; s++) patterns_[7][s] = true;
     }
@@ -152,6 +168,7 @@ private:
     float releaseMs_ = 10.0f;
     float mix_ = 100.0f;
     int resolution_ = 2;  // 0=1/4, 1=1/8, 2=1/16, 3=1/32
+    float bpm_ = 120.0f;
 
     bool patterns_[NUM_PATTERNS][MAX_STEPS];
     float stepPos_ = 0.0f;

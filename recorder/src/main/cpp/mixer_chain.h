@@ -38,6 +38,17 @@ constexpr int kRoles = 4;
 constexpr int kMaster = kRoles;
 constexpr int kBuses = kRoles + 1;
 
+/**
+ * One bus's inserts, in order. Each effect's wet mix is blended with its own
+ * input, and that dry input is delayed by the effect's latency (a limiter's
+ * lookahead, the oversampling filters) first, so a partly wet effect does not
+ * comb-filter against itself. The delay buffers are sized for the effect's
+ * longest latency when it is appended, never on the audio path.
+ *
+ * Not compensated: the chain as a whole still delays its bus by the sum of
+ * its effects' latencies relative to the other buses (at most a few tens of
+ * milliseconds with every lookahead at its longest).
+ */
 class FxChain {
 public:
     void append(int type, const float* parameters, int count, float wet, int sampleRate, int oversampling = 1) {
@@ -49,7 +60,14 @@ public:
             if (std::isfinite(parameters[i])) processor->setParameter(i, parameters[i]);
         }
         processor->setDryWet(wet);
-        effects_.push_back(std::move(processor));
+        Slot slot;
+        const int maxLatency = processor->getMaxLatencyOS();
+        if (maxLatency > 0) {
+            slot.dryLeft.assign(static_cast<size_t>(maxLatency) + 1, 0.f);
+            slot.dryRight.assign(static_cast<size_t>(maxLatency) + 1, 0.f);
+        }
+        slot.effect = std::move(processor);
+        effects_.push_back(std::move(slot));
         sampleRate_ = sampleRate;
     }
 
@@ -59,20 +77,45 @@ public:
 
     void setParameter(int effect, int parameter, float value) {
         if (effect < 0 || effect >= size() || parameter < 0 || !std::isfinite(value)) return;
-        auto& processor = effects_[effect];
+        auto& processor = effects_[effect].effect;
         if (parameter < processor->getNumParameters()) processor->setParameter(parameter, value);
     }
 
     void setWet(int effect, float wet) {
         if (effect < 0 || effect >= size() || !std::isfinite(wet)) return;
-        effects_[effect]->setDryWet(std::clamp(wet, 0.f, 1.f));
+        effects_[effect].effect->setDryWet(std::clamp(wet, 0.f, 1.f));
+    }
+
+    /** The samples by which [effect]'s dry signal is delayed to meet its wet one. */
+    int dryDelay(int effect) const {
+        if (effect < 0 || effect >= size()) return 0;
+        const Slot& slot = effects_[effect];
+        if (slot.dryLeft.empty()) return 0;
+        return std::clamp(slot.effect->getLatencyOS(), 0, static_cast<int>(slot.dryLeft.size()) - 1);
     }
 
     void process(float* left, float* right, int frames) {
-        for (auto& effect : effects_) {
+        for (int index = 0; index < size(); ++index) {
+            Slot& slot = effects_[index];
+            auto& effect = slot.effect;
             const float wet = effect->getDryWet();
             if (wet <= 0.f) continue;
-            if (wet < 1.f) {
+            if (!slot.dryLeft.empty()) {
+                // Kept running even while fully wet, so turning the mix down
+                // later does not bring back stale samples.
+                const int ring = static_cast<int>(slot.dryLeft.size());
+                const int delay = dryDelay(index);
+                int pos = slot.pos;
+                for (int i = 0; i < frames; ++i) {
+                    slot.dryLeft[pos] = left[i];
+                    slot.dryRight[pos] = right[i];
+                    const int read = pos >= delay ? pos - delay : pos - delay + ring;
+                    dryLeft_[i] = slot.dryLeft[read];
+                    dryRight_[i] = slot.dryRight[read];
+                    pos = pos + 1 == ring ? 0 : pos + 1;
+                }
+                slot.pos = pos;
+            } else if (wet < 1.f) {
                 std::copy_n(left, frames, dryLeft_.data());
                 std::copy_n(right, frames, dryRight_.data());
             }
@@ -95,7 +138,13 @@ public:
     }
 
 private:
-    std::vector<std::unique_ptr<SnapinProcessor>> effects_;
+    struct Slot {
+        std::unique_ptr<SnapinProcessor> effect;
+        std::vector<float> dryLeft, dryRight;  // ring of the effect's longest latency + 1
+        int pos = 0;
+    };
+
+    std::vector<Slot> effects_;
     std::array<float, kBlock> dryLeft_{}, dryRight_{};
     int sampleRate_ = 48000;
 };

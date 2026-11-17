@@ -36,10 +36,13 @@ public:
             float l = mid + side;
             float r = mid - side;
 
-            // Equal-power pan
-            float panNorm = (pan + 1.0f) * 0.5f;
-            left[i]  = l * std::cos(panNorm * 1.5707963f);
-            right[i] = r * std::sin(panNorm * 1.5707963f);
+            // Balance, not a pan law: the signal is already stereo, so the
+            // centre is unity and turning one way only lowers the other
+            // side, the same law as the mixer's own pan. (An equal-power pan
+            // here put both sides 3 dB down at the centre, so adding the
+            // effect at its defaults made the track quieter.)
+            left[i]  = l * (pan > 0.0f ? 1.0f - pan : 1.0f);
+            right[i] = r * (pan < 0.0f ? 1.0f + pan : 1.0f);
         }
     }
 

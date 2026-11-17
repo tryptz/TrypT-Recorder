@@ -29,9 +29,10 @@ data class FxPreset(
     fun matches(defs: List<ParamDef>, current: Map<Int, Float>, currentDryWet: Float): Boolean {
         if (kotlin.math.abs(currentDryWet - dryWet) > 0.005f) return false
         val want = resolved(defs)
+        // A reserved slot may still hold what an older project saved there.
         return defs.indices.all { i ->
             val have = current[i] ?: defs[i].default
-            kotlin.math.abs(have - want[i]) <= 1e-3f * (1f + kotlin.math.abs(want[i]))
+            defs[i].reserved || kotlin.math.abs(have - want[i]) <= 1e-3f * (1f + kotlin.math.abs(want[i]))
         }
     }
 }
@@ -50,7 +51,7 @@ data class FxPreset(
  * (1.5–2:1, 1–2 dB of reduction), broad ±1–2 dB tilts, short low-cut
  * ambience at 8–12 %, and mono-safe width. Where an effect of ours behaves
  * differently from its namesake the values were designed around ours (e.g.
- * Trance Gate runs at 120 BPM; delay and reverser times assume it).
+ * Trance Gate defaults to 120 BPM; delay and reverser times assume it).
  *
  * No `else`: a new effect does not compile until it has presets.
  */
@@ -222,7 +223,8 @@ object FxPresets {
             m("Tight Low End", 0 to 10f, 1 to 20f, 3 to 70f),
             c("Crunch Clip", 0 to 70f, 3 to 90f, 4 to 1f),
         )
-        // Fixed 120 BPM; Length stays 16, the span of the patterns.
+        // At the default 120 BPM (the gate has a BPM knob, index 8); Length
+        // stays 16, one bar of the patterns.
         SnapinType.TRANCE_GATE -> listOf(
             m("Gentle Pulse", 0 to 2f, 2 to 5f, 4 to 60f, 5 to 30f, 6 to 20f),
             m("Breathing Offbeat", 0 to 1f, 2 to 60f, 4 to 50f, 5 to 200f, 6 to 25f),
@@ -289,13 +291,14 @@ object FxPresets {
             c("Unison Thick", 0 to 8f, 1 to 25f, 2 to 100f),
             c("Seasick Warble", 0 to 3f, 1 to 10f, 2 to 60f, 3 to 60f, 4 to 2f),
         )
-        // Stereo is the L/R LFO offset in degrees; Thru-0 inverts the wet path.
+        // Stereo is the L/R LFO offset: 100 % is 180°, so 50 % is the classic 90°.
+        // Thru-0 inverts the wet path.
         SnapinType.FLANGER -> listOf(
-            m("Bus Sweep", 0 to 4f, 1 to 40f, 2 to 0.08f, 3 to 10f, 4 to 90f, 5 to 8000f, 7 to 15f),
+            m("Bus Sweep", 0 to 4f, 1 to 40f, 2 to 0.08f, 3 to 10f, 4 to 50f, 5 to 8000f, 7 to 15f),
             c("Jet Flange", 0 to 3f, 1 to 90f, 2 to 0.1f, 3 to 70f, 4 to 0f, 5 to 12000f),
-            c("Pedal Flange", 0 to 2f, 1 to 80f, 2 to 0.4f, 3 to 50f, 4 to 90f, 5 to 10000f),
+            c("Pedal Flange", 0 to 2f, 1 to 80f, 2 to 0.4f, 3 to 50f, 4 to 50f, 5 to 10000f),
             c("Negative Flange", 0 to 1.5f, 1 to 95f, 2 to 0.15f, 3 to -50f, 4 to 0f, 5 to 12000f, 6 to 1f),
-            c("Metallic Ring", 0 to 0.8f, 1 to 30f, 2 to 3f, 3 to 90f, 4 to 60f, 5 to 6000f),
+            c("Metallic Ring", 0 to 0.8f, 1 to 30f, 2 to 3f, 3 to 90f, 4 to 33.3f, 5 to 6000f),
         )
         SnapinType.PHASER -> listOf(
             m("Stereo Bus Phase", 0 to 6f, 1 to 0.1f, 2 to 50f, 3 to 1200f, 4 to 15f, 5 to 180f, 6 to 100f, 7 to 25f),
