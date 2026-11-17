@@ -40,7 +40,7 @@ def to_byte(token):
 
 
 def convert(text):
-    text = text.lstrip("﻿")
+    text = text.lstrip("\ufeff")
     size = 0
     name = ""
     notice = []

@@ -31,7 +31,7 @@ data class CubeLut(val name: String, val size: Int, val colors: LutColors) {
             var name = fileName
             var colors = IntArray(0)
             var count = 0
-            for (line in contents.removePrefix("﻿").lineSequence()) {
+            for (line in contents.removePrefix("\uFEFF").lineSequence()) {
                 val clean = line.substringBefore('#').trim()
                 if (clean.isEmpty()) continue
                 val tokens = clean.split(Regex("\\s+"))
