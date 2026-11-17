@@ -5,6 +5,7 @@ import android.content.ContentValues
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
+import android.util.Log
 import tf.monochrome.recorder.RecorderApp
 import tf.monochrome.recorder.capture.SavedRecording
 import java.text.SimpleDateFormat
@@ -37,13 +38,32 @@ class MediaStoreFile private constructor(
             }
     }
 
-    /** Closes the descriptor and makes the file visible to other apps. */
+    /**
+     * Closes the descriptor and makes the file visible to other apps. An
+     * update can report no rows changed (a busy provider, a scan racing it)
+     * while the row is still there and pending, so the row is read back, and
+     * the update retried a few times, before giving up. Null means the file
+     * is still pending: the caller must [discard] it rather than leave an
+     * invisible file behind.
+     */
     fun publish(resolver: ContentResolver): SavedRecording? {
         runCatching { pfd.close() }
         val done = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
-        return runCatching { resolver.update(uri, done, null, null) }
-            .map { rows -> if (rows > 0) SavedRecording(uri.toString(), displayName, "$relativePath/") else null }
-            .getOrNull()
+        val saved = SavedRecording(uri.toString(), displayName, "$relativePath/")
+        repeat(PUBLISH_ATTEMPTS) { attempt ->
+            val rows = runCatching { resolver.update(uri, done, null, null) }
+                .onFailure { Log.w(TAG, "publish $uri, attempt ${attempt + 1}", it) }
+                .getOrDefault(0)
+            if (rows > 0) return saved
+            when (describe(resolver, uri)?.first) {
+                false -> return saved // already published
+                null -> if (attempt > 0) return null // the row is gone
+                true -> Unit
+            }
+            Thread.sleep(PUBLISH_RETRY_MS * (attempt + 1))
+        }
+        Log.w(TAG, "$uri stayed pending after $PUBLISH_ATTEMPTS attempts")
+        return null
     }
 
     fun discard(resolver: ContentResolver) {
@@ -52,6 +72,10 @@ class MediaStoreFile private constructor(
     }
 
     companion object {
+        private const val TAG = "MediaStoreFile"
+        private const val PUBLISH_ATTEMPTS = 3
+        private const val PUBLISH_RETRY_MS = 250L
+
         fun describe(resolver: ContentResolver, uri: Uri): Pair<Boolean, SavedRecording>? = runCatching {
             val columns = arrayOf(MediaStore.MediaColumns.IS_PENDING, MediaStore.MediaColumns.DISPLAY_NAME,
                 MediaStore.MediaColumns.RELATIVE_PATH)

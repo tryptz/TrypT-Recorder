@@ -125,7 +125,14 @@ fun LibraryScreen(
 
     LaunchedEffect(Unit) { store.refresh() }
 
-    val consent = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) {}
+    // What to do once the system's "allow this app to change this file?" is answered yes.
+    var afterConsent by remember { mutableStateOf<(suspend () -> RecordingsRepository.Outcome)?>(null) }
+    lateinit var handleOutcome: (RecordingsRepository.Outcome) -> Unit
+    val consent = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+        val next = afterConsent
+        afterConsent = null
+        if (result.resultCode == android.app.Activity.RESULT_OK && next != null) scope.launch { handleOutcome(next()) }
+    }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) onEditUris(uris)
     }
@@ -148,9 +155,13 @@ fun LibraryScreen(
         when (outcome) {
             RecordingsRepository.Outcome.Done -> Unit
             RecordingsRepository.Outcome.Failed -> Toast.makeText(context, R.string.library_action_failed, Toast.LENGTH_SHORT).show()
-            is RecordingsRepository.Outcome.NeedsConsent -> consent.launch(IntentSenderRequest.Builder(outcome.request).build())
+            is RecordingsRepository.Outcome.NeedsConsent -> {
+                afterConsent = outcome.afterGrant
+                consent.launch(IntentSenderRequest.Builder(outcome.request).build())
+            }
         }
     }
+    handleOutcome = ::handle
 
     Box(modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {

@@ -72,6 +72,21 @@ internal object CreativeAssets {
         Uri.fromFile(track.file)
     }
 
+    /**
+     * Removes a track downloaded through Music Links (its whole
+     * `recorder-music/imports/<id>` folder). Bundled tracks and anything
+     * outside the imports folder are refused. Drafts that use the track lose
+     * its sound, so a caller should confirm with the user first.
+     * Not yet offered in the UI; the music picker is the place for it.
+     */
+    suspend fun deleteImport(context: Context, track: Track): Boolean = withContext(Dispatchers.IO) {
+        if (track.bundled) return@withContext false
+        val imports = File(root(context), "imports").canonicalFile
+        val folder = track.file.canonicalFile.parentFile ?: return@withContext false
+        if (folder.parentFile != imports || folder.name.startsWith(".")) return@withContext false
+        folder.deleteRecursively()
+    }
+
     class ImportError(@get:StringRes val resource: Int) : Exception()
 
     suspend fun download(context: Context, link: String): Track = withContext(Dispatchers.IO) {

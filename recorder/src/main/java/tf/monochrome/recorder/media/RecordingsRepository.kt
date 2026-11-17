@@ -1,6 +1,7 @@
 package tf.monochrome.recorder.media
 
 import android.app.PendingIntent
+import android.app.RecoverableSecurityException
 import android.content.ContentResolver
 import android.content.ContentUris
 import android.content.ContentValues
@@ -19,6 +20,7 @@ import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
+import tf.monochrome.recorder.capture.EditReadySession
 
 data class Recording(
     val uri: Uri,
@@ -84,19 +86,31 @@ class RecordingsRepository(private val context: Context) {
     sealed interface Outcome {
         data object Done : Outcome
         data object Failed : Outcome
-        /** The file belongs to an earlier install; the system must ask the user. */
-        data class NeedsConsent(val request: PendingIntent) : Outcome
+
+        /**
+         * The file belongs to an earlier install; the system must ask the
+         * user. Once they agree (RESULT_OK), call [afterGrant]: on Android 11+
+         * the system has already done it and this only tidies up; on Android
+         * 10 the grant is only permission, and this does the work.
+         */
+        class NeedsConsent(val request: PendingIntent, val afterGrant: suspend () -> Outcome) : Outcome
     }
 
+    /** Deletes the recording and the edit-ready stems and markers kept beside it. */
     suspend fun delete(uri: Uri): Outcome = withContext(Dispatchers.IO) {
         try {
-            if (resolver.delete(uri, null, null) > 0) Outcome.Done else Outcome.Failed
-        } catch (e: SecurityException) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                Outcome.NeedsConsent(MediaStore.createDeleteRequest(resolver, listOf(uri)))
+            if (resolver.delete(uri, null, null) > 0) {
+                EditReadySession.delete(context, uri.toString())
+                Outcome.Done
             } else {
                 Outcome.Failed
             }
+        } catch (e: SecurityException) {
+            val tidy: suspend () -> Outcome = {
+                withContext(Dispatchers.IO) { EditReadySession.delete(context, uri.toString()) }
+                Outcome.Done
+            }
+            consent(e, { MediaStore.createDeleteRequest(resolver, listOf(uri)) }, tidy) { delete(uri) }
         }
     }
 
@@ -106,11 +120,24 @@ class RecordingsRepository(private val context: Context) {
             val values = ContentValues().apply { put(MediaStore.MediaColumns.DISPLAY_NAME, name) }
             if (resolver.update(uri, values, null, null) > 0) Outcome.Done else Outcome.Failed
         } catch (e: SecurityException) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                Outcome.NeedsConsent(MediaStore.createWriteRequest(resolver, listOf(uri)))
-            } else {
-                Outcome.Failed
-            }
+            // A write request on 11+ only grants access; the rename still has to be made.
+            consent(e, { MediaStore.createWriteRequest(resolver, listOf(uri)) }, { rename(uri, newName) }) { rename(uri, newName) }
         }
+    }
+
+    /**
+     * Android 11+ asks through a MediaStore request. Android 10 says what to
+     * ask in a [RecoverableSecurityException]; once granted, the action is
+     * simply tried again.
+     */
+    private fun consent(
+        e: SecurityException,
+        request: () -> PendingIntent,
+        afterGrantR: suspend () -> Outcome,
+        retryQ: suspend () -> Outcome,
+    ): Outcome = when {
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> Outcome.NeedsConsent(request(), afterGrantR)
+        e is RecoverableSecurityException -> Outcome.NeedsConsent(e.userAction.actionIntent, retryQ)
+        else -> Outcome.Failed
     }
 }
